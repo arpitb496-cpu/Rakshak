@@ -151,8 +151,8 @@ class VisionDetector:
         """
         if hsv is None:
             return "CRITICAL"
-        # The triage tag badge is positioned on the torso below the reflective stripe (approx 35% to 80% down, 25% to 75% wide)
-        roi_y1 = y + int(h * 0.35)
+        # The triage tag badge is positioned on the torso below the reflective stripe (approx 45% to 85% down, 20% to 80% wide)
+        roi_y1 = y + int(h * 0.45)
         roi_y2 = y + int(h * 0.85)
         roi_x1 = x + int(w * 0.20)
         roi_x2 = x + int(w * 0.80)
@@ -167,8 +167,8 @@ class VisionDetector:
         mask_r2 = cv2.inRange(roi, np.array([170, 50, 50], dtype=np.uint8), np.array([180, 255, 255], dtype=np.uint8))
         red_pts = int(cv2.countNonZero(mask_r1) + cv2.countNonZero(mask_r2))
 
-        # Yellow tag (INJURED): H in [23..38], S >= 50, V >= 50
-        mask_y = cv2.inRange(roi, np.array([23, 50, 50], dtype=np.uint8), np.array([38, 255, 255], dtype=np.uint8))
+        # Yellow tag (INJURED): H in [26..38], S >= 50, V >= 50 (rejects chest reflective stripe H=23)
+        mask_y = cv2.inRange(roi, np.array([26, 50, 50], dtype=np.uint8), np.array([38, 255, 255], dtype=np.uint8))
         yellow_pts = int(cv2.countNonZero(mask_y))
 
         # Green tag (STABLE): H in [45..88], S >= 45, V >= 45

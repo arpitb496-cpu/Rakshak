@@ -245,7 +245,7 @@ class VisionTracker:
                             from collections import Counter
                             top_label, top_count = Counter(track.triage_history).most_common(1)[0]
                             vote_pct = top_count / len(track.triage_history)
-                            if vote_pct >= 0.60:
+                            if vote_pct >= 0.70 and len(track.triage_history) >= 4:
                                 track.triage_level = top_label
                                 track.triage_frozen = True
                                 if not track.true_triage and ground_truth_survivor is not None:
