@@ -151,7 +151,7 @@ class RakshakApp:
             self.font_subtitle = pygame.font.SysFont("trebuchetms", 13)
             self.font_badge = pygame.font.SysFont("consolas", 18, bold=True)
             self.font_label = pygame.font.SysFont("consolas", 20, bold=True)
-            self.font_mono = pygame.font.SysFont("consolas", 16, bold=True)
+            self.font_mono = pygame.font.SysFont("consolas", 14, bold=True)
             self.font_log = pygame.font.SysFont("consolas", 16)
             self.font_small = pygame.font.SysFont("consolas", 13, bold=True)
             self.font_banner_title = pygame.font.SysFont("trebuchetms", 34, bold=True)
@@ -1073,8 +1073,8 @@ class RakshakApp:
         self.screen.blit(noise_surf, (self.ARENA_WIDTH - 165, self.ARENA_HEIGHT + 12))
 
         standby_col = (80, 200, 255) if self.moving_standby else (70, 85, 100)
-        standby_surf = self.font_small.render("[P] PATROL", True, standby_col)
-        self.screen.blit(standby_surf, (self.ARENA_WIDTH - 80, self.ARENA_HEIGHT + 12))
+        standby_surf = self.font_small.render("PATROL", True, standby_col)
+        self.screen.blit(standby_surf, (self.ARENA_WIDTH - 75, self.ARENA_HEIGHT + 12))
 
         paused_str = " [PAUSED]" if self.paused else ""
         if paused_str:
@@ -1086,56 +1086,53 @@ class RakshakApp:
             can_dispatch = self.fsm.can_manual_dispatch()
             can_extract = self.fsm.can_manual_extract()
 
-            x_pos = 15
-            y_pos = self.ARENA_HEIGHT + 42
+            lock_col = (50, 235, 130) if can_lock else (95, 105, 120)
+            disp_col = (255, 205, 50) if can_dispatch else (95, 105, 120)
+            ext_col = (60, 220, 255) if can_extract else (95, 105, 120)
 
-            drive_surf = self.font_small.render("[WASD/Arrows] Move", True, (180, 190, 205))
-            self.screen.blit(drive_surf, (x_pos, y_pos))
+            lock_tag = " (READY)" if can_lock else " (NO TRK)"
+            disp_tag = " (READY)" if can_dispatch else " (NO SOS)"
+            ext_tag = " (READY)" if can_extract else " (IDLE)"
+
+            row_a_y = self.ARENA_HEIGHT + 36
+            x_pos = 15
+
+            drive_surf = self.font_small.render("[WASD] Move", True, (180, 190, 205))
+            self.screen.blit(drive_surf, (x_pos, row_a_y))
             x_pos += drive_surf.get_width() + 10
 
             sep0 = self.font_small.render("|", True, (65, 75, 90))
-            self.screen.blit(sep0, (x_pos, y_pos))
+            self.screen.blit(sep0, (x_pos, row_a_y))
             x_pos += sep0.get_width() + 10
 
-            # [E] Lock & SOS
-            lock_col = (50, 235, 130) if can_lock else (95, 105, 120)
-            lock_label = "[E] LOCK & SOS" + (" (READY)" if can_lock else " (OUT OF RANGE)")
-            lock_surf = self.font_small.render(lock_label, True, lock_col)
-            self.screen.blit(lock_surf, (x_pos, y_pos))
+            lock_surf = self.font_small.render(f"[E] LOCK & SOS{lock_tag}", True, lock_col)
+            self.screen.blit(lock_surf, (x_pos, row_a_y))
             x_pos += lock_surf.get_width() + 10
 
             sep1 = self.font_small.render("|", True, (65, 75, 90))
-            self.screen.blit(sep1, (x_pos, y_pos))
+            self.screen.blit(sep1, (x_pos, row_a_y))
             x_pos += sep1.get_width() + 10
 
-            # [Enter] Dispatch
-            disp_col = (255, 205, 50) if can_dispatch else (95, 105, 120)
-            disp_label = "[Enter] DISPATCH" + (" (READY)" if can_dispatch else " (NO SOS)")
-            disp_surf = self.font_small.render(disp_label, True, disp_col)
-            self.screen.blit(disp_surf, (x_pos, y_pos))
+            disp_surf = self.font_small.render(f"[Enter] DISPATCH{disp_tag}", True, disp_col)
+            self.screen.blit(disp_surf, (x_pos, row_a_y))
             x_pos += disp_surf.get_width() + 10
 
             sep2 = self.font_small.render("|", True, (65, 75, 90))
-            self.screen.blit(sep2, (x_pos, y_pos))
+            self.screen.blit(sep2, (x_pos, row_a_y))
             x_pos += sep2.get_width() + 10
 
-            # [X] Extract
-            ext_col = (60, 220, 255) if can_extract else (95, 105, 120)
-            ext_label = "[X] EXTRACT" + (" (READY)" if can_extract else " (STANDBY)")
-            ext_surf = self.font_small.render(ext_label, True, ext_col)
-            self.screen.blit(ext_surf, (x_pos, y_pos))
-            x_pos += ext_surf.get_width() + 10
+            ext_surf = self.font_small.render(f"[X] EXTRACT{ext_tag}", True, ext_col)
+            self.screen.blit(ext_surf, (x_pos, row_a_y))
 
-            sep3 = self.font_small.render("|", True, (65, 75, 90))
-            self.screen.blit(sep3, (x_pos, y_pos))
-            x_pos += sep3.get_width() + 10
-
+            # Row B: navigation & system mode controls
+            row_b_y = self.ARENA_HEIGHT + 55
             p_status = "ON" if getattr(self, "priority_mode", True) else "OFF"
-            ret_surf = self.font_small.render(f"[M] Auto | [F] Full | [P] Priority: {p_status}", True, (140, 150, 165))
-            # Clip to arena width so it never overflows
-            clip_w = max(0, self.ARENA_WIDTH - x_pos - 5)
-            clipped = ret_surf.subsurface((0, 0, min(ret_surf.get_width(), clip_w), ret_surf.get_height()))
-            self.screen.blit(clipped, (x_pos, y_pos))
+            row_b_text = f"[M] Auto  |  [F] Fullscreen  |  [P] Priority: {p_status}  |  [SPACE] Pause  |  [R] Reset"
+            surf_b = self.font_small.render(row_b_text, True, (140, 150, 165))
+            max_w = self.ARENA_WIDTH - 20
+            if surf_b.get_width() > max_w:
+                surf_b = surf_b.subsurface((0, 0, max_w, surf_b.get_height()))
+            self.screen.blit(surf_b, (15, row_b_y))
         else:
             p_status = "ON" if getattr(self, "priority_mode", True) else "OFF"
             # Row A: navigation & mode controls
@@ -1269,9 +1266,12 @@ class RakshakApp:
             status_str = "LOCKED" if st.is_locked else "ACQUIRING..."
             status_col = (50, 240, 100) if st.is_locked else (240, 205, 40)
 
+            lock_err = getattr(self.tracker, "error_at_lock", None)
+            lock_err_str = f"{lock_err:.1f} px" if lock_err is not None else "--"
+
             s1 = self.font_mono.render(f"GT: ({gt_x:.1f}, {gt_y:.1f})  |  Est: ({st.est_world_x:.1f}, {st.est_world_y:.1f})", True, (220, 230, 240))
-            s2 = self.font_mono.render(f"Range: {st.est_range:.0f} px  |  Bearing: {math.degrees(st.est_bearing):+.1f}°", True, (220, 230, 240))
-            s3 = self.font_mono.render(f"Position Error:  {err_px:.1f} px", True, (220, 230, 240))
+            s2 = self.font_mono.render(f"Range: {st.est_range:.0f} px  |  Bearing: {math.degrees(st.est_bearing):+.1f}deg", True, (220, 230, 240))
+            s3 = self.font_mono.render(f"Live est. error: {err_px:.1f} px  |  Lock error: {lock_err_str}", True, (220, 230, 240))
             s4 = self.font_mono.render("Tracking Status: ", True, (220, 230, 240))
             s_stat = self.font_mono.render(f"{st.target_id} {st.triage_level} [{status_str}]", True, status_col)
 
@@ -1283,7 +1283,7 @@ class RakshakApp:
         else:
             s1 = self.font_mono.render("GT: --  |  Est: SCANNING...", True, (175, 190, 205))
             s2 = self.font_mono.render("Range: SCANNING ARENA", True, (145, 160, 175))
-            s3 = self.font_mono.render("Position Error:  ACQUIRING BEACON", True, (145, 160, 175))
+            s3 = self.font_mono.render("Live est. error: --  |  Lock error: --", True, (145, 160, 175))
             s4 = self.font_mono.render("Tracking Status: ", True, (175, 190, 205))
             s_stat = self.font_mono.render("SEARCH_PATROL", True, (0, 190, 240))
 
@@ -1312,7 +1312,7 @@ class RakshakApp:
             for resc in arena_rescuers:
                 st_str = resc.state.name if hasattr(resc, "state") else "STANDBY"
                 tid = getattr(resc, "assigned_survivor_id", None)
-                target_str = f"\u2192 {tid}" if tid else "STANDBY"
+                target_str = f" \u2192 {tid}" if tid else ""
                 eta_str = ""
                 r_path = getattr(resc, "path", [])
                 if st_str == "EN_ROUTE" and r_path:
@@ -1321,7 +1321,7 @@ class RakshakApp:
                 row_col = (60, 235, 120) if st_str in ("EXTRACTING", "SECURED") else (
                     (255, 165, 40) if st_str == "EN_ROUTE" else (140, 155, 175))
                 r_surf = self.font_small.render(
-                    f"  {resc.name}: {st_str} {target_str}{eta_str}", True, row_col)
+                    f"  {resc.name}: {st_str}{target_str}{eta_str}", True, row_col)
                 self.screen.blit(r_surf, (hud_x + 16, row_y))
                 row_y += 20
         curr_y += team_h + 6

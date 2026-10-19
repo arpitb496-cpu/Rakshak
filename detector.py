@@ -273,6 +273,7 @@ class VisionDetector:
         cv2.circle(feed, (cc_x, cc_y), 4, (70, 220, 70), 1)
 
         # Draw detections
+        placed_labels = []  # list of (x, y1, y2) to prevent overlapping labels
         for det in self.cached_detections:
             x, y, w, h = det.bbox
             sx = x * scale
@@ -310,19 +311,48 @@ class VisionDetector:
             # Annotation Label: No fake confidence, class + triage + range + bearing
             bearing_deg = math.degrees(det.estimated_bearing)
             label_text = f"{det.class_label} [{det.triage_level}]" if det.class_label == "SURVIVOR" else det.class_label
-            sub_text = f"Z:{det.estimated_range:.0f}px | B:{bearing_deg:+.1f}° | A:{det.mask_area_ratio:.2f}"
+            sub_text = f"Z:{det.estimated_range:.0f}px | B:{bearing_deg:+.1f}deg | A:{det.mask_area_ratio:.2f}"
 
-            # Clamped label coordinates so text stays inside frame and does not overlap box
-            label_x = max(6, min(sx, feed.shape[1] - 170))
+            # Clamped label coordinates with overlap avoidance
+            label_x = max(6, min(sx, feed.shape[1] - 175))
+
+            # Candidate vertical positions: above box, below box, further above, further below
+            candidates = []
             if sy >= 30:
-                ty1 = sy - 16
-                ty2 = sy - 4
+                candidates.append((sy - 16, sy - 4))
+                candidates.append((sy + sh + 14, sy + sh + 26))
+                candidates.append((sy - 42, sy - 30))
+                candidates.append((sy + sh + 40, sy + sh + 52))
             else:
-                ty1 = sy + sh + 14
-                ty2 = sy + sh + 26
-                if ty2 >= feed.shape[0] - 2:
-                    ty1 = max(14, sy + 14)
-                    ty2 = max(26, sy + 26)
+                candidates.append((sy + sh + 14, sy + sh + 26))
+                candidates.append((sy + sh + 40, sy + sh + 52))
+                candidates.append((sy - 16, sy - 4))
+                candidates.append((sy - 42, sy - 30))
+
+            chosen_ty1, chosen_ty2 = None, None
+            for c_ty1, c_ty2 in candidates:
+                if c_ty1 < 14 or c_ty2 > feed.shape[0] - 3:
+                    continue
+                conflict = False
+                for px, py1, py2 in placed_labels:
+                    if abs(label_x - px) < 135 and abs(c_ty1 - py1) < 24:
+                        conflict = True
+                        break
+                if not conflict:
+                    chosen_ty1, chosen_ty2 = c_ty1, c_ty2
+                    break
+
+            if chosen_ty1 is None:
+                for c_ty1, c_ty2 in candidates:
+                    if c_ty1 >= 14 and c_ty2 <= feed.shape[0] - 3:
+                        chosen_ty1, chosen_ty2 = c_ty1, c_ty2
+                        break
+                if chosen_ty1 is None:
+                    chosen_ty1 = max(14, min(sy - 16, feed.shape[0] - 16))
+                    chosen_ty2 = chosen_ty1 + 12
+
+            placed_labels.append((label_x, chosen_ty1, chosen_ty2))
+            ty1, ty2 = chosen_ty1, chosen_ty2
 
             # Label banner
             cv2.putText(

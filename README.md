@@ -2,7 +2,7 @@
 ### *"See. Locate. Rescue."*
 
 **Hackathon:** Hack in Hills '26 &nbsp;|&nbsp; **Problem Statement:** PS 01 — Autonomous Vision-Guided Robot  
-**Demo:** [▶ YouTube Demo (Placeholder)](https://youtu.be/placeholder) &nbsp;|&nbsp; **Screenshots:** *(see docs/screenshots/)*
+**Demo:** [▶ YouTube Demo (Placeholder)](https://youtu.be/placeholder) &nbsp;|&nbsp; **Screenshots:** [docs/screenshots/](docs/screenshots/)
 
 ---
 
@@ -16,9 +16,11 @@ Rakshak answers this challenge with a complete 2-D disaster simulation: a scout 
 rubble-filled terrain, detects survivors through a synthetic camera, triages them by severity, and
 dispatches up to three rescuers in priority order — all without human intervention.
 
-<!-- Screenshots (placeholders) -->
-<!-- ![Rakshak Simulation Overview](docs/screenshots/overview.png) -->
-<!-- ![Vision Pipeline & Telemetry](docs/screenshots/vision_telemetry.png) -->
+## Screenshots
+
+| Autonomous Mid-Mission | Manual Teleoperation Mode | Mission Complete Report |
+|:---:|:---:|:---:|
+| ![Autonomous Mid-Mission](docs/screenshots/01_autonomous.png) | ![Manual Teleoperation Mode](docs/screenshots/02_manual.png) | ![Mission Complete Report](docs/screenshots/03_complete.png) |
 
 ---
 
