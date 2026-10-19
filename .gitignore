@@ -1,0 +1,29 @@
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS / Editor
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+
+# Runtime outputs
+mission_report.json
+final_map.png
+demo.mp4
+*.mov
+
+# macOS
+.DS_Store
