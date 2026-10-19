@@ -102,6 +102,11 @@ def run_single_layout(seed: int, max_frames: int = 3000, dt: float = 1.0 / 30.0)
         tracker.record_rescue_error((arena.survivor.x, arena.survivor.y))
     rescue_err = tracker.error_at_rescue
 
+    triage_records = dict(getattr(tracker, "frozen_triage_records", {}))
+    for tid, trk in tracker.survivor_tracks.items():
+        if trk.triage_frozen and trk.true_triage:
+            triage_records[tid] = (trk.true_triage, trk.triage_level)
+
     return {
         "seed": seed,
         "reached": reached,
@@ -110,6 +115,7 @@ def run_single_layout(seed: int, max_frames: int = 3000, dt: float = 1.0 / 30.0)
         "lock_err": lock_err,
         "rescue_err": rescue_err,
         "survivor_pos": (arena.survivor.x, arena.survivor.y),
+        "triage_records": triage_records,
     }
 
 
@@ -128,28 +134,35 @@ def execute_benchmark(num_layouts: int = 20, max_frames: int = 3000):
     print(f"  RAKSHAK: {num_layouts} RANDOM LAYOUTS BENCHMARK EVALUATION (HEADLESS)")
     print("=" * 78)
 
-    for seed in range(num_layouts):
-        res = run_single_layout(seed=seed, max_frames=max_frames)
-        results.append(res)
-        total_collisions += res["collisions"]
-        if res["longest_idle"] > max_idle_overall:
-            max_idle_overall = res["longest_idle"]
+    from sound import get_sound_manager
+    sm = get_sound_manager()
+    old_suppress = getattr(sm, "suppress_logs", False)
+    sm.suppress_logs = True
+    try:
+        for seed in range(num_layouts):
+            res = run_single_layout(seed=seed, max_frames=max_frames)
+            results.append(res)
+            total_collisions += res["collisions"]
+            if res["longest_idle"] > max_idle_overall:
+                max_idle_overall = res["longest_idle"]
 
-        if res["lock_err"] is not None:
-            lock_errors.append(res["lock_err"])
-        if res["rescue_err"] is not None:
-            rescue_errors.append(res["rescue_err"])
+            if res["lock_err"] is not None:
+                lock_errors.append(res["lock_err"])
+            if res["rescue_err"] is not None:
+                rescue_errors.append(res["rescue_err"])
 
-        status = "REACHED" if res["reached"] else "TIMEOUT"
-        err_str = f"{res['lock_err']:.2f}px" if res["lock_err"] is not None else "N/A"
-        rescue_str = f"{res['rescue_err']:.2f}px" if res["rescue_err"] is not None else "N/A"
-        print(
-            f"Layout {seed:2d}: {status:7s} | "
-            f"Collisions: {res['collisions']} | "
-            f"Max Idle: {res['longest_idle']:.2f}s | "
-            f"Lock Err: {err_str:>8s} | "
-            f"Rescue Err: {rescue_str:>8s}"
-        )
+            status = "REACHED" if res["reached"] else "TIMEOUT"
+            err_str = f"{res['lock_err']:.2f}px" if res["lock_err"] is not None else "N/A"
+            rescue_str = f"{res['rescue_err']:.2f}px" if res["rescue_err"] is not None else "N/A"
+            print(
+                f"Layout {seed:2d}: {status:7s} | "
+                f"Collisions: {res['collisions']} | "
+                f"Max Idle: {res['longest_idle']:.2f}s | "
+                f"Lock Err: {err_str:>8s} | "
+                f"Rescue Err: {rescue_str:>8s}"
+            )
+    finally:
+        sm.suppress_logs = old_suppress
 
     # Aggregates
     reached_count = sum(1 for r in results if r["reached"])
@@ -163,6 +176,32 @@ def execute_benchmark(num_layouts: int = 20, max_frames: int = 3000):
     print(f"Longest idle time:         {max_idle_overall:.2f}s")
     print(f"Median localization error: {median_lock_error:.2f} px (at lock time)")
     print(f"Median rescue error:       {median_rescue_error:.2f} px (at rescue standoff)")
+
+    # Aggregate triage metrics
+    all_triage_records = []
+    for res in results:
+        for tid, pair in res.get("triage_records", {}).items():
+            all_triage_records.append(pair)
+
+    labels = ["CRITICAL", "INJURED", "STABLE"]
+    cm = {r: {c: 0 for c in labels} for r in labels}
+    correct_triage = 0
+    total_triage = 0
+    for gt, perc in all_triage_records:
+        if gt in labels and perc in labels:
+            cm[gt][perc] += 1
+            total_triage += 1
+            if gt == perc:
+                correct_triage += 1
+
+    triage_acc_pct = round(100.0 * correct_triage / total_triage, 1) if total_triage > 0 else 100.0
+    print(f"Triage accuracy:           {triage_acc_pct:.1f}% ({correct_triage}/{total_triage})")
+    print("\nConfusion Matrix (rows = true, columns = perceived):")
+    header = "            " + "  ".join(f"{c:>8s}" for c in labels)
+    print(header)
+    for r in labels:
+        row_str = f"  {r:8s}  " + "  ".join(f"{cm[r][c]:>8d}" for c in labels)
+        print(row_str)
     print("=" * 78 + "\n")
 
     # Required assertions
@@ -187,6 +226,10 @@ def execute_benchmark(num_layouts: int = 20, max_frames: int = 3000):
         "longest_idle": max_idle_overall,
         "median_lock_error": median_lock_error,
         "median_rescue_error": median_rescue_error,
+        "triage_accuracy": triage_acc_pct,
+        "triage_total": total_triage,
+        "triage_correct": correct_triage,
+        "confusion_matrix": cm,
         "results": results,
     }
 
@@ -198,3 +241,25 @@ def test_20_random_layouts_benchmark():
 if __name__ == "__main__":
     execute_benchmark(num_layouts=20, max_frames=3000)
 
+
+
+def test_benchmark_triage_metrics_and_confusion_matrix(capsys):
+    """
+    Verifies Task 2:
+    - execute_benchmark computes triage accuracy % and 3x3 confusion matrix.
+    - [AUDIO] logs are quieted during benchmark execution.
+    """
+    summary = execute_benchmark(num_layouts=2, max_frames=1500)
+    assert "triage_accuracy" in summary
+    assert "confusion_matrix" in summary
+    assert isinstance(summary["triage_accuracy"], float)
+    assert 0.0 <= summary["triage_accuracy"] <= 100.0
+    cm = summary["confusion_matrix"]
+    for lbl in ["CRITICAL", "INJURED", "STABLE"]:
+        assert lbl in cm
+        for col in ["CRITICAL", "INJURED", "STABLE"]:
+            assert isinstance(cm[lbl][col], int)
+            assert cm[lbl][col] >= 0
+
+    captured = capsys.readouterr().out
+    assert "[AUDIO]" not in captured

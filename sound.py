@@ -32,6 +32,7 @@ class SoundManager:
         self.chan_sfx = None
         self.chan_siren = None
         self.siren_played_survivors = set()
+        self.suppress_logs: bool = False
 
         # 1. Initialize mixer safely
         self._init_mixer()
@@ -196,6 +197,10 @@ class SoundManager:
     def is_muted(self) -> bool:
         return self.muted
 
+    def _audio_log(self, msg: str):
+        if not getattr(self, "suppress_logs", False):
+            print(msg)
+
     def is_enabled(self) -> bool:
         return self.enabled and pygame.mixer.get_init() is not None
 
@@ -207,14 +212,14 @@ class SoundManager:
     ):
         """Plays a registered sound on dedicated SFX channel if audio is enabled and not muted."""
         if self.muted:
-            print("[AUDIO] skipped: muted")
+            self._audio_log("[AUDIO] skipped: muted")
             return
         if not self.enabled or pygame.mixer.get_init() is None:
-            print("[AUDIO] skipped: no channel")
+            self._audio_log("[AUDIO] skipped: no channel")
             return
         snd = self.sounds.get(sound_name)
         if snd is None:
-            print("[AUDIO] skipped: file missing")
+            self._audio_log("[AUDIO] skipped: file missing")
             return
 
         chan = self.chan_sfx
@@ -224,7 +229,7 @@ class SoundManager:
             except Exception:
                 chan = None
         if chan is None:
-            print("[AUDIO] skipped: no channel")
+            self._audio_log("[AUDIO] skipped: no channel")
             return
 
         try:
@@ -237,9 +242,9 @@ class SoundManager:
                 tag = f" {sid_str}{sev_str}"
             elif severity is not None:
                 tag = f" {severity}"
-            print(f"[AUDIO] played: {sound_name}{tag}")
+            self._audio_log(f"[AUDIO] played: {sound_name}{tag}")
         except Exception:
-            print("[AUDIO] skipped: no channel")
+            self._audio_log("[AUDIO] skipped: no channel")
 
     def play_siren(self, survivor_id: Any, severity: str):
         """
@@ -250,13 +255,13 @@ class SoundManager:
         - STABLE: short beep only, no siren.
         """
         if self.muted:
-            print("[AUDIO] skipped: muted")
+            self._audio_log("[AUDIO] skipped: muted")
             return
         if not self.enabled or pygame.mixer.get_init() is None:
-            print("[AUDIO] skipped: no channel")
+            self._audio_log("[AUDIO] skipped: no channel")
             return
         if self.chan_siren is None:
-            print("[AUDIO] skipped: no channel")
+            self._audio_log("[AUDIO] skipped: no channel")
             return
 
         sev_upper = str(severity).upper() if severity else "INJURED"
@@ -265,7 +270,7 @@ class SoundManager:
 
         # Per-survivor once flag check
         if sid_str in self.siren_played_survivors or sid in self.siren_played_survivors:
-            print("[AUDIO] skipped: flag set")
+            self._audio_log("[AUDIO] skipped: flag set")
             return
 
         if sev_upper == "CRITICAL":
@@ -279,7 +284,7 @@ class SoundManager:
 
         snd = self.sounds.get(sound_key)
         if snd is None:
-            print("[AUDIO] skipped: file missing")
+            self._audio_log("[AUDIO] skipped: file missing")
             return
 
         try:
@@ -287,10 +292,10 @@ class SoundManager:
             self.siren_played_survivors.add(sid_str)
             self.siren_played_survivors.add(sid)
             if sev_upper != "STABLE":
-                print(f"[AUDIO] siren played: {sid_str} {sev_upper}")
-            print(f"[AUDIO] played: {sound_key} {sid_str} {sev_upper}")
+                self._audio_log(f"[AUDIO] siren played: {sid_str} {sev_upper}")
+            self._audio_log(f"[AUDIO] played: {sound_key} {sid_str} {sev_upper}")
         except Exception:
-            print("[AUDIO] skipped: no channel")
+            self._audio_log("[AUDIO] skipped: no channel")
 
     def clear_siren_flag(self, survivor_id: Optional[Any] = None):
         """Clears per-survivor once flag for the specified survivor or all survivors if None."""

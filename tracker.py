@@ -66,6 +66,7 @@ class VisionTracker:
 
         # Multi-target survivor track dictionary: target_id -> TrackedTarget
         self.survivor_tracks: dict[str, TrackedTarget] = {}
+        self.frozen_triage_records: dict[str, tuple] = {}
         self.active_track_id: Optional[str] = None
         self._manual_survivor_track: Optional[TrackedTarget] = None
 
@@ -213,6 +214,8 @@ class VisionTracker:
                         gt_label = getattr(best_cand, "triage", "")
                         if gt_label:
                             track.true_triage = gt_label
+                            if track.triage_frozen:
+                                self.frozen_triage_records[track.target_id] = (track.true_triage, track.triage_level)
 
                 # Majority-vote triage from perceived labels (>=60% of last 8 frames)
                 if not track.triage_frozen:
@@ -245,6 +248,16 @@ class VisionTracker:
                             if vote_pct >= 0.60:
                                 track.triage_level = top_label
                                 track.triage_frozen = True
+                                if not track.true_triage and ground_truth_survivor is not None:
+                                    cands = ground_truth_survivor if isinstance(ground_truth_survivor, list) else [ground_truth_survivor]
+                                    for c in cands:
+                                        cx = getattr(c, "x", None)
+                                        cy = getattr(c, "y", None)
+                                        if cx is not None and cy is not None and math.hypot(track.est_world_x - cx, track.est_world_y - cy) < 85.0:
+                                            track.true_triage = getattr(c, "triage", "")
+                                            break
+                                if track.true_triage:
+                                    self.frozen_triage_records[track.target_id] = (track.true_triage, track.triage_level)
                                 print(f"[TRIAGE] {track.target_id} label frozen: {track.triage_level} "
                                       f"({vote_pct*100:.0f}% of {len(track.triage_history)} frames)")
             else:
@@ -403,6 +416,7 @@ class VisionTracker:
     def reset(self):
         """Resets all active tracks and benchmark counters."""
         self.survivor_tracks.clear()
+        self.frozen_triage_records.clear()
         self.active_track_id = None
         self._manual_survivor_track = None
         self.rescuer_tracks.clear()
