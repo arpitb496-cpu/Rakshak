@@ -147,22 +147,23 @@ python3 make_demo.py              # record 82-second demo.mp4
 
 ## Results
 
-### Benchmark (20 random layouts, 3000 frames/layout)
+### Benchmark Comparison: Development vs. Held-Out Evaluation
 
-Evaluated headlessly via `.venv/bin/python run.py --benchmark` across 20 distinct layouts:
+Evaluated headlessly via `.venv/bin/python run.py --benchmark`:
 
-| Metric | Value |
-|--------|-------|
-| **Reach rate** | **100.0%** (20/20 layouts reached) |
-| **Collision count** | **0** (zero obstacle, hazard, wall, or rescuer collisions) |
-| **Longest idle time** | **0.20 s** (well below 3.0 s freeze threshold) |
-| **Median localization error** | **8.92 px** (at lock time) |
-| **Median rescue error** | **2.25 px** (at rescue standoff) |
-| **Triage accuracy** | **100.0%** (25/25 frozen survivor targets correctly classified) |
-| **Test suite** | **95 tests passing** in pytest |
+| Metric | Dev Results (20 layouts, seeds 0–19) | Held-Out Results (100 layouts, seeds 1000–1099) |
+|---|---|---|
+| **Reach rate** | **100.0%** (20/20 layouts reached) | **100.0%** (100/100 layouts reached) |
+| **Collision count** | **0** (zero collisions) | **0** (zero collisions) |
+| **Longest idle time** | **0.20 s** | **0.20 s** |
+| **Median localization error** | **8.92 px** (at lock time) | **5.84 px** (at lock time) |
+| **Median rescue error** | **2.25 px** (at rescue standoff) | **2.47 px** (at rescue standoff) |
+| **Triage accuracy** | **100.0%** (25/25 targets) | **96.5%** (109/113 targets) |
+| **Test suite** | **95 tests passing** in pytest | **95 tests passing** in pytest |
 
-#### Benchmark Confusion Matrix (Rows = Ground Truth, Columns = Perceived)
+#### Benchmark Confusion Matrices (Rows = Ground Truth, Columns = Perceived)
 
+**Dev Results (20 layouts, seeds 0–19):**
 ```
               CRITICAL   INJURED    STABLE
   CRITICAL          12         0         0
@@ -170,9 +171,21 @@ Evaluated headlessly via `.venv/bin/python run.py --benchmark` across 20 distinc
   STABLE             0         0         5
 ```
 
-> Reproduce at any time:
+**Held-Out Results (100 layouts, seeds 1000–1099):**
+```
+              CRITICAL   INJURED    STABLE
+  CRITICAL          51         0         0
+  INJURED            4        29         0
+  STABLE             0         0        29
+```
+
+> Reproduce benchmark commands at any time:
 > ```bash
+> # Dev benchmark (20 layouts):
 > .venv/bin/python run.py --benchmark
+>
+> # Held-out benchmark (100 layouts, seeds 1000-1099):
+> .venv/bin/python run.py --benchmark --layouts 100 --seed 1000
 > ```
 
 ### Perception & Accuracy Engineering
