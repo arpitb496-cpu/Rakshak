@@ -334,7 +334,24 @@ class MissionFSM:
         sec_count = 0
         if self.dispatch_manager.completed_sos:
             sec_count = len(set(s.survivor_id for s in self.dispatch_manager.completed_sos.values()))
+            for sid in self.dispatch_manager.completed_sos:
+                if hasattr(self.arena, "survivors"):
+                    for s in self.arena.survivors:
+                        if s.id == sid:
+                            s.is_secured = True
+                            s.is_rescued = True
+                if sid in self.tracker.survivor_tracks:
+                    self.tracker.survivor_tracks[sid].is_secured = True
+                if self.tracker.active_track_id == sid:
+                    self.tracker.clear_rescue_target(sid)
+
         if hasattr(self.arena, "survivors") and self.arena.survivors:
+            for s in self.arena.survivors:
+                if getattr(s, "is_secured", False):
+                    if s.id in self.tracker.survivor_tracks:
+                        self.tracker.survivor_tracks[s.id].is_secured = True
+                    if self.tracker.active_track_id == s.id:
+                        self.tracker.clear_rescue_target(s.id)
             arena_sec = sum(1 for s in self.arena.survivors if getattr(s, "is_secured", False))
             sec_count = max(sec_count, arena_sec)
 

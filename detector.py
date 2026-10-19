@@ -316,22 +316,26 @@ class VisionDetector:
             # Clamped label coordinates with overlap avoidance
             label_x = max(6, min(sx, feed.shape[1] - 175))
 
-            # Candidate vertical positions: above box, below box, further above, further below
+            # Candidate vertical positions:
+            # Keep labels at y >= 30 (never overlap CAM-1 header) and inside frame.
+            # If box is too close to top (sy < 46), draw inside the box or below it.
             candidates = []
-            if sy >= 30:
-                candidates.append((sy - 16, sy - 4))
-                candidates.append((sy + sh + 14, sy + sh + 26))
-                candidates.append((sy - 42, sy - 30))
-                candidates.append((sy + sh + 40, sy + sh + 52))
+            if sy >= 46:
+                candidates.append((sy - 16, sy - 4))          # above box
+                candidates.append((sy + sh + 14, sy + sh + 26))  # below box
+                candidates.append((max(30, sy + 14), max(30, sy + 14) + 12))  # inside box
+                candidates.append((sy + sh + 38, sy + sh + 50))  # further below
+                if sy - 42 >= 30:
+                    candidates.append((sy - 42, sy - 30))     # further above
             else:
-                candidates.append((sy + sh + 14, sy + sh + 26))
-                candidates.append((sy + sh + 40, sy + sh + 52))
-                candidates.append((sy - 16, sy - 4))
-                candidates.append((sy - 42, sy - 30))
+                candidates.append((sy + sh + 14, sy + sh + 26))  # below box
+                candidates.append((max(30, sy + 14), max(30, sy + 14) + 12))  # inside box
+                candidates.append((sy + sh + 38, sy + sh + 50))  # further below
+                candidates.append((max(30, sy + 28), max(30, sy + 28) + 12))  # further inside
 
             chosen_ty1, chosen_ty2 = None, None
             for c_ty1, c_ty2 in candidates:
-                if c_ty1 < 14 or c_ty2 > feed.shape[0] - 3:
+                if c_ty1 < 30 or c_ty2 > feed.shape[0] - 4:
                     continue
                 conflict = False
                 for px, py1, py2 in placed_labels:
@@ -344,12 +348,15 @@ class VisionDetector:
 
             if chosen_ty1 is None:
                 for c_ty1, c_ty2 in candidates:
-                    if c_ty1 >= 14 and c_ty2 <= feed.shape[0] - 3:
+                    if c_ty1 >= 30 and c_ty2 <= feed.shape[0] - 4:
                         chosen_ty1, chosen_ty2 = c_ty1, c_ty2
                         break
                 if chosen_ty1 is None:
-                    chosen_ty1 = max(14, min(sy - 16, feed.shape[0] - 16))
+                    chosen_ty1 = max(30, min(feed.shape[0] - 16, sy + sh + 14))
                     chosen_ty2 = chosen_ty1 + 12
+                    if chosen_ty2 > feed.shape[0] - 4:
+                        chosen_ty2 = feed.shape[0] - 4
+                        chosen_ty1 = max(30, chosen_ty2 - 12)
 
             placed_labels.append((label_x, chosen_ty1, chosen_ty2))
             ty1, ty2 = chosen_ty1, chosen_ty2

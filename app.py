@@ -146,17 +146,19 @@ class RakshakApp:
 
     def _init_fonts(self):
         """Initializes system fonts with generous sizes for high readability in 720p video."""
+        mono_fonts = "menlo,monaco,consolas,dejavusansmono,monospace"
+        ui_sans = "trebuchetms,helvetica,arial,sans-serif"
         try:
-            self.font_title = pygame.font.SysFont("trebuchetms", 24, bold=True)
-            self.font_subtitle = pygame.font.SysFont("trebuchetms", 13)
-            self.font_badge = pygame.font.SysFont("consolas", 18, bold=True)
-            self.font_label = pygame.font.SysFont("consolas", 20, bold=True)
-            self.font_mono = pygame.font.SysFont("consolas", 14, bold=True)
-            self.font_log = pygame.font.SysFont("consolas", 16)
-            self.font_small = pygame.font.SysFont("consolas", 13, bold=True)
-            self.font_banner_title = pygame.font.SysFont("trebuchetms", 34, bold=True)
-            self.font_banner_sub = pygame.font.SysFont("consolas", 18, bold=True)
-            self.font_legend = pygame.font.SysFont("consolas", 12, bold=True)
+            self.font_title = pygame.font.SysFont(ui_sans, 24, bold=True)
+            self.font_subtitle = pygame.font.SysFont(ui_sans, 13)
+            self.font_badge = pygame.font.SysFont(mono_fonts, 18, bold=True)
+            self.font_label = pygame.font.SysFont(mono_fonts, 20, bold=True)
+            self.font_mono = pygame.font.SysFont(mono_fonts, 14, bold=True)
+            self.font_log = pygame.font.SysFont(mono_fonts, 16)
+            self.font_small = pygame.font.SysFont(mono_fonts, 13, bold=True)
+            self.font_banner_title = pygame.font.SysFont(ui_sans, 34, bold=True)
+            self.font_banner_sub = pygame.font.SysFont(mono_fonts, 18, bold=True)
+            self.font_legend = pygame.font.SysFont(mono_fonts, 12, bold=True)
         except Exception:
             self.font_title = pygame.font.Font(None, 26)
             self.font_subtitle = pygame.font.Font(None, 14)
@@ -787,6 +789,7 @@ class RakshakApp:
 
         # Target Survivors: person icon with triage tags and pulsing beacon ring
         survivors = self.arena.survivors if hasattr(self.arena, "survivors") and self.arena.survivors else [self.arena.survivor]
+        placed_surv_label_rects = []
         for surv in survivors:
             sx, sy = int(surv.x), int(surv.y)
 
@@ -828,7 +831,7 @@ class RakshakApp:
 
             # Survivor text label with dark pill background: "S1 CRITICAL", etc.
             if is_done:
-                surv_text = f"{surv.id} SECURED ✓"
+                surv_text = f"{surv.id} SECURED"
                 lbl_col = (60, 245, 140)
             else:
                 surv_text = f"{surv.id} {triage_lvl}"
@@ -838,10 +841,41 @@ class RakshakApp:
 
             lbl_s = self.font_legend.render(surv_text, True, lbl_col)
             lw, lh = lbl_s.get_width() + 12, lbl_s.get_height() + 4
-            lx = sx - lw // 2
-            ly = sy - 34
-            pygame.draw.rect(self.screen, (20, 22, 28), (lx, ly, lw, lh), border_radius=3)
-            pygame.draw.rect(self.screen, lbl_col, (lx, ly, lw, lh), 1, border_radius=3)
+
+            # Candidate label positions: above, below, further above, further below, left, right
+            cand_offsets = [
+                (0, -34),              # standard above
+                (0, 24),               # below survivor
+                (0, -52),              # higher above
+                (0, 42),               # further below
+                (-lw // 2 - 14, -10),  # left of survivor
+                (lw // 2 + 14, -10),   # right of survivor
+            ]
+
+            chosen_rect = None
+            for dx, dy in cand_offsets:
+                cx = max(4, min(self.ARENA_WIDTH - lw - 4, sx - lw // 2 + dx))
+                cy = max(4, min(self.ARENA_HEIGHT - lh - 4, sy + dy))
+                cand_rect = pygame.Rect(cx, cy, lw, lh)
+                conflict = False
+                for pr in placed_surv_label_rects:
+                    if cand_rect.inflate(8, 8).colliderect(pr):
+                        conflict = True
+                        break
+                if not conflict:
+                    chosen_rect = cand_rect
+                    break
+
+            if chosen_rect is None:
+                lx = max(4, min(self.ARENA_WIDTH - lw - 4, sx - lw // 2))
+                ly = max(4, min(self.ARENA_HEIGHT - lh - 4, sy - 34))
+                chosen_rect = pygame.Rect(lx, ly, lw, lh)
+
+            placed_surv_label_rects.append(chosen_rect)
+            lx, ly = chosen_rect.x, chosen_rect.y
+
+            pygame.draw.rect(self.screen, (20, 22, 28), chosen_rect, border_radius=3)
+            pygame.draw.rect(self.screen, lbl_col, chosen_rect, 1, border_radius=3)
             self.screen.blit(lbl_s, (lx + 6, ly + 2))
 
         # Robot Comet Trail: last ~4s with fading alpha
@@ -1257,8 +1291,26 @@ class RakshakApp:
         self.screen.blit(m_surf, (hud_x + hud_w - 32 - m_surf.get_width() - 10, curr_y + 12))
 
         st = self.tracker.survivor_track
-        gt_x, gt_y = None, None
+        # Reset telemetry if track has already been secured
         if st is not None:
+            is_sec = getattr(st, "is_secured", False)
+            if not is_sec:
+                if hasattr(self.fsm, "dispatch_manager") and st.target_id in self.fsm.dispatch_manager.completed_sos:
+                    is_sec = True
+                elif hasattr(self.arena, "survivors"):
+                    for s in self.arena.survivors:
+                        if s.id == st.target_id and (s.is_rescued or getattr(s, "is_secured", False)):
+                            is_sec = True
+                            break
+            if is_sec:
+                st.is_secured = True
+                self.tracker.clear_rescue_target(st.target_id)
+                st = self.tracker.survivor_track
+                if st is not None and getattr(st, "is_secured", False):
+                    st = None
+
+        gt_x, gt_y = None, None
+        if st is not None and not getattr(st, "is_secured", False):
             matched_surv = self.arena.get_active_survivor(tracker=self.tracker, fsm=self.fsm)
             gt_x, gt_y = (matched_surv.x, matched_surv.y) if matched_surv else (0.0, 0.0)
             err_px = math.hypot(st.est_world_x - gt_x, st.est_world_y - gt_y)

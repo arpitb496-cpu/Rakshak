@@ -260,8 +260,14 @@ class RescuerAgent:
                 # Mark survivor secured based on physical proximity at extraction site
                 target_s = None
                 if arena.survivors:
-                    target_s = min(arena.survivors, key=lambda s: math.hypot(s.x - self.x, s.y - self.y))
-                    if math.hypot(target_s.x - self.x, target_s.y - self.y) < 65.0:
+                    if self.assigned_survivor_id:
+                        for s in arena.survivors:
+                            if s.id == self.assigned_survivor_id:
+                                target_s = s
+                                break
+                    if target_s is None:
+                        target_s = min(arena.survivors, key=lambda s: math.hypot(s.x - self.x, s.y - self.y))
+                    if target_s is not None:
                         target_s.is_rescued = True
                         target_s.is_secured = True
                         actual_id = target_s.id

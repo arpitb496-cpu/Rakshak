@@ -115,8 +115,12 @@ class VisionTracker:
 
     def clear_rescue_target(self, track_id: Optional[str] = None):
         """Atomically clears active per-rescue tracking state upon rescue completion."""
-        if track_id and track_id in self.survivor_tracks:
-            self.survivor_tracks[track_id].is_secured = True
+        if track_id:
+            if track_id in self.survivor_tracks:
+                self.survivor_tracks[track_id].is_secured = True
+            for trk in self.survivor_tracks.values():
+                if trk.target_id == track_id:
+                    trk.is_secured = True
         elif self.active_track_id and self.active_track_id in self.survivor_tracks:
             self.survivor_tracks[self.active_track_id].is_secured = True
 
