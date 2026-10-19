@@ -454,8 +454,9 @@ class MissionFSM:
                     "loc_error": None,
                 }
             if tr.is_locked and self.survivor_timeline[tr.target_id]["loc_error"] is None:
-                if self.tracker.last_localization_error is not None:
-                    self.survivor_timeline[tr.target_id]["loc_error"] = self.tracker.last_localization_error
+                err = getattr(tr, "error_at_lock", None) or self.tracker.track_lock_errors.get(tr.target_id) or self.tracker.last_localization_error
+                if err is not None:
+                    self.survivor_timeline[tr.target_id]["loc_error"] = err
 
         # Sync rescuer arrival & secured times from dispatch manager
         for sid, sos in self.dispatch_manager.active_sos.items():
@@ -1077,17 +1078,12 @@ class MissionFSM:
             resp_time = max(0.0, t_sec - t_detect)
             response_times.append(resp_time)
 
-            # Compute error only from correctly matched survivor/estimate pairs
-            pair_err = None
-            if hasattr(self.arena, "survivors") and self.arena.survivors:
-                real_s = next((s for s in self.arena.survivors if s.id == sid), None)
-                if real_s is not None and sid in self.tracker.survivor_tracks:
-                    trk = self.tracker.survivor_tracks[sid]
-                    d_err = math.hypot(trk.est_world_x - real_s.x, trk.est_world_y - real_s.y)
-                    if d_err < 85.0:
-                        pair_err = d_err
-            if pair_err is None and data.get("loc_error") is not None and data["loc_error"] < 85.0:
-                pair_err = data["loc_error"]
+            # Error at lock time for this specific survivor
+            pair_err = data.get("loc_error")
+            if pair_err is None and sid in self.tracker.survivor_tracks:
+                pair_err = self.tracker.survivor_tracks[sid].error_at_lock
+            if pair_err is None and sid in self.tracker.track_lock_errors:
+                pair_err = self.tracker.track_lock_errors[sid]
 
             if pair_err is not None:
                 loc_errors.append(pair_err)
@@ -1104,6 +1100,8 @@ class MissionFSM:
             })
 
         avg_resp = float(np.mean(response_times)) if response_times else 0.0
+        median_loc_err = float(np.median(loc_errors)) if loc_errors else (self.tracker.error_at_lock or 0.0)
+        max_loc_err = float(np.max(loc_errors)) if loc_errors else (self.tracker.error_at_lock or 0.0)
         mean_loc_err = float(np.mean(loc_errors)) if loc_errors else (self.tracker.error_at_lock or 0.0)
 
         report = {
@@ -1118,6 +1116,8 @@ class MissionFSM:
             "hazards_avoided": self.hazards_avoided_count,
             "re_plans": self.hazard_replans_count,
             "battery_used_pct": round(min(100.0, self.total_battery_drained), 1),
+            "median_localization_error_px": round(median_loc_err, 2),
+            "max_localization_error_px": round(max_loc_err, 2),
             "mean_localization_error_px": round(mean_loc_err, 2),
             "triage_accuracy_pct": self.tracker.triage_accuracy(),
         }

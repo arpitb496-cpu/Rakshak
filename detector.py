@@ -247,7 +247,7 @@ class VisionDetector:
         return results
 
     def get_annotated_feed(
-        self, camera_frame: np.ndarray, scale: int = 2
+        self, camera_frame: np.ndarray, scale: int = 2, tracker=None
     ) -> np.ndarray:
         """
         Generates an upscaled HUD visualization feed with bounding boxes,
@@ -271,6 +271,23 @@ class VisionDetector:
         cv2.line(feed, (cc_x - 12, cc_y), (cc_x + 12, cc_y), (70, 220, 70), 1)
         cv2.line(feed, (cc_x, cc_y - 12), (cc_x, cc_y + 12), (70, 220, 70), 1)
         cv2.circle(feed, (cc_x, cc_y), 4, (70, 220, 70), 1)
+
+        # Identify locked/primary survivor detection
+        primary_det = None
+        surv_dets = [d for d in self.cached_detections if d.class_label == "SURVIVOR"]
+        if surv_dets:
+            st = getattr(tracker, "survivor_track", None) if tracker is not None else None
+            if st is not None:
+                primary_det = min(
+                    surv_dets,
+                    key=lambda d: abs(d.estimated_bearing - st.est_bearing) + abs(d.estimated_range - st.est_range) * 0.05
+                )
+            else:
+                triage_rank = {"CRITICAL": 0, "INJURED": 1, "STABLE": 2}
+                primary_det = min(
+                    surv_dets,
+                    key=lambda d: (triage_rank.get(d.triage_level, 3), d.estimated_range)
+                )
 
         # Draw detections
         placed_labels = []  # list of (x, y1, y2) to prevent overlapping labels
@@ -308,79 +325,94 @@ class VisionDetector:
             cv2.line(feed, (sx + sw, sy + sh), (sx + sw - corner_len, sy + sh), (255, 255, 255), 2)
             cv2.line(feed, (sx + sw, sy + sh), (sx + sw, sy + sh - corner_len), (255, 255, 255), 2)
 
-            # Annotation Label: No fake confidence, class + triage + range + bearing
-            bearing_deg = math.degrees(det.estimated_bearing)
-            label_text = f"{det.class_label} [{det.triage_level}]" if det.class_label == "SURVIVOR" else det.class_label
-            sub_text = f"Z:{det.estimated_range:.0f}px | B:{bearing_deg:+.1f}deg | A:{det.mask_area_ratio:.2f}"
+            # Draw full label + telemetry ONLY for the locked/primary SURVIVOR.
+            # Other detections (rescuers, non-locked/secondary survivors) get only a short tag ("R", "S").
+            is_primary = (det is primary_det)
 
-            # Clamped label coordinates with overlap avoidance
-            label_x = max(6, min(sx, feed.shape[1] - 175))
+            if is_primary:
+                bearing_deg = math.degrees(det.estimated_bearing)
+                label_text = f"SURVIVOR [{det.triage_level}]"
+                sub_text = f"Z:{det.estimated_range:.0f}px | B:{bearing_deg:+.1f}deg | A:{det.mask_area_ratio:.2f}"
+                label_x = max(6, min(sx, feed.shape[1] - 175))
 
-            # Candidate vertical positions:
-            # Keep labels at y >= 30 (never overlap CAM-1 header) and inside frame.
-            # If box is too close to top (sy < 46), draw inside the box or below it.
-            candidates = []
-            if sy >= 46:
-                candidates.append((sy - 16, sy - 4))          # above box
-                candidates.append((sy + sh + 14, sy + sh + 26))  # below box
-                candidates.append((max(30, sy + 14), max(30, sy + 14) + 12))  # inside box
-                candidates.append((sy + sh + 38, sy + sh + 50))  # further below
-                if sy - 42 >= 30:
-                    candidates.append((sy - 42, sy - 30))     # further above
-            else:
-                candidates.append((sy + sh + 14, sy + sh + 26))  # below box
-                candidates.append((max(30, sy + 14), max(30, sy + 14) + 12))  # inside box
-                candidates.append((sy + sh + 38, sy + sh + 50))  # further below
-                candidates.append((max(30, sy + 28), max(30, sy + 28) + 12))  # further inside
+                candidates = []
+                if sy >= 46:
+                    candidates.append((sy - 16, sy - 4))          # above box
+                    candidates.append((sy + sh + 14, sy + sh + 26))  # below box
+                    candidates.append((max(30, sy + 14), max(30, sy + 14) + 12))  # inside box
+                    candidates.append((sy + sh + 38, sy + sh + 50))  # further below
+                    if sy - 42 >= 30:
+                        candidates.append((sy - 42, sy - 30))     # further above
+                else:
+                    candidates.append((sy + sh + 14, sy + sh + 26))  # below box
+                    candidates.append((max(30, sy + 14), max(30, sy + 14) + 12))  # inside box
+                    candidates.append((sy + sh + 38, sy + sh + 50))  # further below
+                    candidates.append((max(30, sy + 28), max(30, sy + 28) + 12))  # further inside
 
-            chosen_ty1, chosen_ty2 = None, None
-            for c_ty1, c_ty2 in candidates:
-                if c_ty1 < 30 or c_ty2 > feed.shape[0] - 4:
-                    continue
-                conflict = False
-                for px, py1, py2 in placed_labels:
-                    if abs(label_x - px) < 135 and abs(c_ty1 - py1) < 24:
-                        conflict = True
-                        break
-                if not conflict:
-                    chosen_ty1, chosen_ty2 = c_ty1, c_ty2
-                    break
-
-            if chosen_ty1 is None:
+                chosen_ty1, chosen_ty2 = None, None
                 for c_ty1, c_ty2 in candidates:
-                    if c_ty1 >= 30 and c_ty2 <= feed.shape[0] - 4:
+                    if c_ty1 < 30 or c_ty2 > feed.shape[0] - 4:
+                        continue
+                    conflict = False
+                    for px, py1, py2 in placed_labels:
+                        if abs(label_x - px) < 135 and abs(c_ty1 - py1) < 24:
+                            conflict = True
+                            break
+                    if not conflict:
                         chosen_ty1, chosen_ty2 = c_ty1, c_ty2
                         break
+
                 if chosen_ty1 is None:
-                    chosen_ty1 = max(30, min(feed.shape[0] - 16, sy + sh + 14))
-                    chosen_ty2 = chosen_ty1 + 12
-                    if chosen_ty2 > feed.shape[0] - 4:
-                        chosen_ty2 = feed.shape[0] - 4
-                        chosen_ty1 = max(30, chosen_ty2 - 12)
+                    for c_ty1, c_ty2 in candidates:
+                        if c_ty1 >= 30 and c_ty2 <= feed.shape[0] - 4:
+                            chosen_ty1, chosen_ty2 = c_ty1, c_ty2
+                            break
+                    if chosen_ty1 is None:
+                        chosen_ty1 = max(30, min(feed.shape[0] - 16, sy + sh + 14))
+                        chosen_ty2 = chosen_ty1 + 12
+                        if chosen_ty2 > feed.shape[0] - 4:
+                            chosen_ty2 = feed.shape[0] - 4
+                            chosen_ty1 = max(30, chosen_ty2 - 12)
 
-            placed_labels.append((label_x, chosen_ty1, chosen_ty2))
-            ty1, ty2 = chosen_ty1, chosen_ty2
+                placed_labels.append((label_x, chosen_ty1, chosen_ty2))
+                ty1, ty2 = chosen_ty1, chosen_ty2
 
-            # Label banner
-            cv2.putText(
-                feed,
-                label_text,
-                (label_x, ty1),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.42,
-                box_color,
-                1,
-                cv2.LINE_AA,
-            )
-            cv2.putText(
-                feed,
-                sub_text,
-                (label_x, ty2),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.32,
-                text_color,
-                1,
-                cv2.LINE_AA,
-            )
+                cv2.putText(
+                    feed,
+                    label_text,
+                    (label_x, ty1),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.42,
+                    box_color,
+                    1,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    feed,
+                    sub_text,
+                    (label_x, ty2),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.32,
+                    text_color,
+                    1,
+                    cv2.LINE_AA,
+                )
+            else:
+                tag = "R" if det.class_label == "RESCUER" else "S"
+                tag_x = max(6, min(sx + 3, feed.shape[1] - 15))
+                tag_y = max(30, min(sy + 12, feed.shape[0] - 4))
+                if sy >= 42:
+                    tag_y = sy - 4
+                placed_labels.append((tag_x, tag_y, tag_y))
+                cv2.putText(
+                    feed,
+                    tag,
+                    (tag_x, tag_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.38,
+                    box_color,
+                    1,
+                    cv2.LINE_AA,
+                )
 
         return feed

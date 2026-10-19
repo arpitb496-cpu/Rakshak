@@ -37,6 +37,7 @@ class TrackedTarget:
     triage_history: List[str] = None
     triage_frozen: bool = False       # True once label is majority-confirmed and track is locked
     true_triage: str = ""             # ground-truth label (metrics only, never used for dispatch)
+    error_at_lock: Optional[float] = None  # localization error at moment this specific track locked
 
     def __post_init__(self):
         if self.recent_measurements is None:
@@ -72,7 +73,8 @@ class VisionTracker:
 
         # Lock and rescue accuracy benchmarks
         self.has_locked: bool = False
-        self.error_at_lock: Optional[float] = None
+        self.track_lock_errors: dict[str, float] = {}
+        self._last_error_at_lock: Optional[float] = None
         self.error_at_rescue: Optional[float] = None
 
         # Friendly rescuer tracks
@@ -81,6 +83,27 @@ class VisionTracker:
         # Ground truth tracking stats for telemetry and benchmarking
         self.last_localization_error: Optional[float] = None
         self.cumulative_readings: int = 0
+
+    @property
+    def error_at_lock(self) -> Optional[float]:
+        st = self.survivor_track
+        if st is not None:
+            if getattr(st, "error_at_lock", None) is not None:
+                return st.error_at_lock
+            if st.target_id in self.track_lock_errors:
+                return self.track_lock_errors[st.target_id]
+        if self._last_error_at_lock is not None:
+            return self._last_error_at_lock
+        return None
+
+    @error_at_lock.setter
+    def error_at_lock(self, val: Optional[float]):
+        self._last_error_at_lock = val
+        st = self.survivor_track
+        if st is not None:
+            st.error_at_lock = val
+            if val is not None:
+                self.track_lock_errors[st.target_id] = val
 
     @property
     def survivor_track(self) -> Optional[TrackedTarget]:
@@ -127,7 +150,7 @@ class VisionTracker:
         self.active_track_id = None
         self._manual_survivor_track = None
         self.has_locked = False
-        self.error_at_lock = None
+        self._last_error_at_lock = None
         self.error_at_rescue = None
         self.last_localization_error = None
         try:
@@ -329,24 +352,43 @@ class VisionTracker:
             self.active_track_id = active.target_id if active else None
 
         # Localization error calculation for telemetry and benchmark
+        def _get_gt_xy(trk_target):
+            if ground_truth_survivor is None:
+                return None
+            cands = ground_truth_survivor if isinstance(ground_truth_survivor, list) else [ground_truth_survivor]
+            if not cands:
+                return None
+            def _pt(p):
+                return (p.x, p.y) if hasattr(p, "x") else (p[0], p[1])
+            for c in cands:
+                if getattr(c, "id", None) == trk_target.target_id:
+                    return _pt(c)
+            best_gt = min(
+                cands,
+                key=lambda p: math.hypot(trk_target.est_world_x - _pt(p)[0], trk_target.est_world_y - _pt(p)[1]),
+            )
+            return _pt(best_gt)
+
+        # Record error_at_lock for each track when it locks
+        for trk in self.survivor_tracks.values():
+            if trk.is_locked and trk.error_at_lock is None:
+                gt_pt = _get_gt_xy(trk)
+                if gt_pt is not None:
+                    trk.error_at_lock = math.hypot(trk.est_world_x - gt_pt[0], trk.est_world_y - gt_pt[1])
+                    self.track_lock_errors[trk.target_id] = trk.error_at_lock
+
         st = self.survivor_track
         if ground_truth_survivor is not None and st is not None:
-            if isinstance(ground_truth_survivor, list) and ground_truth_survivor:
-                def _pt(p):
-                    return (p.x, p.y) if hasattr(p, "x") else (p[0], p[1])
-                best_gt = min(
-                    ground_truth_survivor,
-                    key=lambda p: math.hypot(st.est_world_x - _pt(p)[0], st.est_world_y - _pt(p)[1]),
-                )
-                gt_x, gt_y = _pt(best_gt)
-            else:
-                gt_x = ground_truth_survivor.x if hasattr(ground_truth_survivor, "x") else ground_truth_survivor[0]
-                gt_y = ground_truth_survivor.y if hasattr(ground_truth_survivor, "y") else ground_truth_survivor[1]
-            self.last_matched_gt = (gt_x, gt_y)
-            self.last_localization_error = math.hypot(st.est_world_x - gt_x, st.est_world_y - gt_y)
-            if st.is_locked and not self.has_locked:
-                self.has_locked = True
-                self.error_at_lock = self.last_localization_error
+            gt_pt = _get_gt_xy(st)
+            if gt_pt is not None:
+                gt_x, gt_y = gt_pt
+                self.last_matched_gt = (gt_x, gt_y)
+                self.last_localization_error = math.hypot(st.est_world_x - gt_x, st.est_world_y - gt_y)
+                if st.is_locked and st.error_at_lock is None:
+                    st.error_at_lock = self.last_localization_error
+                    self.track_lock_errors[st.target_id] = self.last_localization_error
+                if st.is_locked:
+                    self.has_locked = True
 
         # Update Rescuer tracks
         rescuer_dets = [d for d in detections if d.class_label == "RESCUER"]

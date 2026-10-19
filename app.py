@@ -1255,7 +1255,7 @@ class RakshakApp:
 
         # 3. First-Person Camera Feed (160x90 scaled up to 320x180)
         cam_box = pygame.Rect(hud_x + 16, curr_y, 320, 180)
-        annotated_bgr = self.detector.get_annotated_feed(self.camera.last_frame, scale=2)
+        annotated_bgr = self.detector.get_annotated_feed(self.camera.last_frame, scale=2, tracker=self.tracker)
 
         # Convert BGR (OpenCV) to RGB for Pygame surface
         annotated_rgb = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)
@@ -1318,7 +1318,11 @@ class RakshakApp:
             status_str = "LOCKED" if st.is_locked else "ACQUIRING..."
             status_col = (50, 240, 100) if st.is_locked else (240, 205, 40)
 
-            lock_err = getattr(self.tracker, "error_at_lock", None)
+            lock_err = getattr(st, "error_at_lock", None)
+            if lock_err is None and st is not None:
+                lock_err = self.tracker.track_lock_errors.get(st.target_id)
+            if lock_err is None:
+                lock_err = getattr(self.tracker, "error_at_lock", None)
             lock_err_str = f"{lock_err:.1f} px" if lock_err is not None else "--"
 
             s1 = self.font_mono.render(f"GT: ({gt_x:.1f}, {gt_y:.1f})  |  Est: ({st.est_world_x:.1f}, {st.est_world_y:.1f})", True, (220, 230, 240))
@@ -1478,14 +1482,14 @@ class RakshakApp:
         bat_used = rep.get("battery_used_pct", 0)
         battery_rem = max(0, int(100 - bat_used))
         hazards = rep.get("hazards_avoided", getattr(self.fsm, "hazards_avoided_count", 0))
-        mean_err = rep.get("mean_localization_error_px", 0.0)
+        loc_err_median = rep.get("median_localization_error_px", rep.get("mean_localization_error_px", 0.0))
 
         lines = [
             (f"Survivors Secured:   {secured} / {total}", (60, 240, 130) if secured == total else (255, 190, 40)),
             (f"Mission Time:        {time_elapsed:.1f} s", (200, 215, 235)),
             (f"Area Scanned:        {scanned:.1f}%", (80, 210, 255)),
             (f"Battery Remaining:   {battery_rem}%", (200, 215, 235)),
-            (f"Loc Error (mean):    {mean_err:.1f} px", (200, 215, 235)),
+            (f"Loc Error (median, at lock): {loc_err_median:.1f} px", (200, 215, 235)),
             (f"Triage Accuracy:     {rep.get('triage_accuracy_pct', 100.0):.0f}%", (80, 230, 180)),
             (f"Hazards Avoided:     {hazards}", (200, 215, 235)),
             ("Report:              mission_report.json", (100, 160, 200)),
