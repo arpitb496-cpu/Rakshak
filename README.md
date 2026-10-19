@@ -2,7 +2,7 @@
 ### *"See. Locate. Rescue."*
 
 **Hackathon:** Hack in Hills '26 &nbsp;|&nbsp; **Problem Statement:** PS 01 — Autonomous Vision-Guided Robot  
-**Demo:** [▶ YouTube](https://youtu.be/nN3z_cLW_N0) &nbsp;|&nbsp; **Screenshots:** *(see assets/ folder)*
+**Demo:** [▶ YouTube Demo (Placeholder)](https://youtu.be/placeholder) &nbsp;|&nbsp; **Screenshots:** *(see docs/screenshots/)*
 
 ---
 
@@ -15,6 +15,10 @@
 Rakshak answers this challenge with a complete 2-D disaster simulation: a scout robot patrols
 rubble-filled terrain, detects survivors through a synthetic camera, triages them by severity, and
 dispatches up to three rescuers in priority order — all without human intervention.
+
+<!-- Screenshots (placeholders) -->
+<!-- ![Rakshak Simulation Overview](docs/screenshots/overview.png) -->
+<!-- ![Vision Pipeline & Telemetry](docs/screenshots/vision_telemetry.png) -->
 
 ---
 
@@ -33,7 +37,7 @@ dispatches up to three rescuers in priority order — all without human interven
 | **Camera noise** | Gaussian pixel noise + drifting smoke haze (toggle `N`) |
 | **Fullscreen** | `F`/`F11`; Retina-safe letterbox scaling; mouse coords remapped |
 | **Manual override** | `M` → steer with WASD, `E` lock, `Enter` dispatch, `X` extract |
-| **91+ tests** | Full pytest suite covering FSM, tracker, detector, vision, dispatch, coverage, hazard, manual mode, triage, seed reproducibility |
+| **95 tests** | Full pytest suite covering FSM, tracker, detector, vision, dispatch, coverage, hazard, manual mode, triage, seed reproducibility |
 
 ---
 
@@ -145,48 +149,57 @@ python3 make_demo.py              # record 82-second demo.mp4
 
 ### Benchmark (20 random layouts, 3000 frames/layout)
 
+Evaluated headlessly via `.venv/bin/python run.py --benchmark` across 20 distinct layouts:
+
 | Metric | Value |
 |--------|-------|
-| Reach rate | **100%** (20/20 layouts) |
-| Collision count | 0 |
-| Longest idle time | < 0.2 s |
-| Median lock error | **~6–8 px** |
-| Median rescue error | **~2–3 px** |
-| Triage accuracy | **~85–100%** (perceived vs ground truth) |
-| Test suite | **91+ tests passing** |
+| **Reach rate** | **100.0%** (20/20 layouts reached) |
+| **Collision count** | **0** (zero obstacle, hazard, wall, or rescuer collisions) |
+| **Longest idle time** | **0.20 s** (well below 3.0 s freeze threshold) |
+| **Median localization error** | **8.92 px** (at lock time) |
+| **Median rescue error** | **2.25 px** (at rescue standoff) |
+| **Triage accuracy** | **100.0%** (25/25 frozen survivor targets correctly classified) |
+| **Test suite** | **95 tests passing** in pytest |
 
-> Run `python3 run.py --benchmark --layouts 20` to reproduce.
+#### Benchmark Confusion Matrix (Rows = Ground Truth, Columns = Perceived)
 
-### Localization Accuracy Notes
+```
+              CRITICAL   INJURED    STABLE
+  CRITICAL          12         0         0
+  INJURED            0         8         0
+  STABLE             0         0         5
+```
 
-The vision pipeline achieves < 10 px median lock error by combining:
-1. **Range sanity gate** — detections with Z > 340 px discarded
-2. **Variance-based lock** — confirmed only after 3 consecutive stable frames (σ ≤ 20 px)
-3. **EMA smoothing** — α = 0.35 prevents single-frame noise jumps
+> Reproduce at any time:
+> ```bash
+> .venv/bin/python run.py --benchmark
+> ```
 
-### Triage Accuracy
+### Perception & Accuracy Engineering
 
-Triage is derived purely from perceived detector labels (8-frame majority vote, ≥60% threshold).
-`triage_accuracy_pct` is reported in `mission_report.json` and shown on the Mission Complete overlay.
+1. **Range sanity gating:** Detections with estimated distance $Z > 340$ px or $Z < 10$ px are automatically discarded.
+2. **Variance-based lock confirmation:** Position locked only after $\ge 4$ consecutive stable observations with spatial variance $\sigma \le 20$ px.
+3. **EMA coordinate smoothing:** Exponential moving average ($lpha = 0.35$) eliminates single-frame jitter.
+4. **Honest majority-vote triage:** Ground-truth labels are never consulted for operational decisions. Perceived triage requires $\ge 70\%$ vote consensus across observations before freezing.
 
 ---
 
 ## Limitations & Future Scope
 
-| Limitation | Future Work |
-|-----------|------------|
-| 2-D simulation only | Port to ROS 2 / Gazebo for 3-D real-world deployment |
-| Synthetic camera (no real image) | Integrate YOLOv8 on real RGB-D or thermal camera |
-| Single-scout agent | Multi-robot coordination (auction-based task allocation) |
-| No real-time comms | WebSocket telemetry dashboard (Flask/FastAPI) |
-| Fixed arena size | Procedurally generated maps from floor plans |
+| Limitation | Technical Detail | Future Scope |
+|---|---|---|
+| **INJURED vs STABLE long-range confusion** | At distance > 220 px, badge size shrinks to $<4$ px, risking color confusion with torso reflective striping ($H=23$). Resolved via vertical ROI tightening ($0.45h$–$0.85h$) and tuning yellow band to $H \in [26, 38]$. | Implement multi-scale super-resolution or zoom ROI on candidate survivor boxes. |
+| **2-D synthetic camera** | Camera rasterizes 2.5-D column projections in 160×90 rather than true 3-D mesh raytracing or RGB-D sensors. | Port sensor stack to ROS 2 Humble + Gazebo simulation with simulated RealSense D435. |
+| **Simulation-only environment** | Physics, wheel slip, and sensor latency are ideal 2-D kinematic models. | Deploy on physical differential-drive rover platform with STM32 motor controller. |
+| **Single-scout agent** | One scout robot conducts sweeps while 3 autonomous rescuers assist. | Implement multi-agent auction-based dispatch algorithm for collaborative multi-scout swarms. |
+| **Fixed arena dimensions** | Disaster site is bounded to 800×650 px grid. | Integrate real-time Occupancy Grid Mapping (Cartographer / SLAM Toolbox) for unbounded environments. |
 
 ---
 
 ## Test Suite
 
 ```bash
-.venv/bin/python -m pytest tests/ -v    # run all 91+ tests
+.venv/bin/python -m pytest tests/ -v    # run all 95 tests
 .venv/bin/python -m pytest tests/ -q    # quiet summary
 ```
 
