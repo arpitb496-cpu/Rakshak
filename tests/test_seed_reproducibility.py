@@ -34,3 +34,33 @@ def test_no_seed_does_not_crash():
     """Omitting seed should work and not raise."""
     app = RakshakApp(fps=30, seed=None)
     assert len(app.arena.survivors) > 0
+
+
+def test_benchmark_same_seed_identical_results():
+    """Verifies that running execute_benchmark with the same seed yields identical results."""
+    from tests.test_random_layouts import execute_benchmark
+    res_a = execute_benchmark(num_layouts=2, max_frames=500, seed=42)
+    res_b = execute_benchmark(num_layouts=2, max_frames=500, seed=42)
+    assert res_a["reach_rate"] == res_b["reach_rate"]
+    assert res_a["median_lock_error"] == res_b["median_lock_error"]
+    assert res_a["triage_accuracy"] == res_b["triage_accuracy"]
+
+
+def test_benchmark_different_seeds_different_layouts():
+    """Verifies that different base seeds produce different layouts."""
+    from tests.test_random_layouts import run_single_layout
+    layout_a = run_single_layout(seed=10, max_frames=50)
+    layout_b = run_single_layout(seed=20, max_frames=50)
+    assert layout_a["survivor_pos"] != layout_b["survivor_pos"]
+
+
+def test_twenty_benchmark_layouts_are_all_distinct():
+    """Verifies that all 20 benchmark layouts (seed = base_seed + i) have distinct survivor locations."""
+    from arena import DisasterArena
+    from tests.test_random_layouts import DEFAULT_BASE_SEED
+    positions = set()
+    for i in range(20):
+        arena = DisasterArena(width=800, height=650)
+        arena.randomize_layout(seed=DEFAULT_BASE_SEED + i)
+        positions.add((arena.survivor.x, arena.survivor.y))
+    assert len(positions) == 20, f"Expected 20 distinct survivor positions, got {len(positions)}"

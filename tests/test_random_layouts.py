@@ -1,3 +1,4 @@
+from typing import Optional
 """
 tests/test_random_layouts.py - Headless 20-layout stress test for Rakshak.
 
@@ -119,11 +120,21 @@ def run_single_layout(seed: int, max_frames: int = 3000, dt: float = 1.0 / 30.0)
     }
 
 
-def execute_benchmark(num_layouts: int = 20, max_frames: int = 3000):
+DEFAULT_BASE_SEED = 0
+
+
+def execute_benchmark(
+    num_layouts: int = 20,
+    max_frames: int = 3000,
+    seed: Optional[int] = None,
+    base_seed: Optional[int] = None,
+):
     """
     Executes headless benchmark across multiple randomized disaster layouts.
     Validates safety, reachability, responsiveness, and localization accuracy.
+    Layout i uses seed (base_seed + i).
     """
+    active_base_seed = seed if seed is not None else (base_seed if base_seed is not None else DEFAULT_BASE_SEED)
     results = []
     total_collisions = 0
     max_idle_overall = 0.0
@@ -139,8 +150,9 @@ def execute_benchmark(num_layouts: int = 20, max_frames: int = 3000):
     old_suppress = getattr(sm, "suppress_logs", False)
     sm.suppress_logs = True
     try:
-        for seed in range(num_layouts):
-            res = run_single_layout(seed=seed, max_frames=max_frames)
+        for i in range(num_layouts):
+            layout_seed = active_base_seed + i
+            res = run_single_layout(seed=layout_seed, max_frames=max_frames)
             results.append(res)
             total_collisions += res["collisions"]
             if res["longest_idle"] > max_idle_overall:
@@ -155,7 +167,7 @@ def execute_benchmark(num_layouts: int = 20, max_frames: int = 3000):
             err_str = f"{res['lock_err']:.2f}px" if res["lock_err"] is not None else "N/A"
             rescue_str = f"{res['rescue_err']:.2f}px" if res["rescue_err"] is not None else "N/A"
             print(
-                f"Layout {seed:2d}: {status:7s} | "
+                f"Layout {i:2d}: {status:7s} | "
                 f"Collisions: {res['collisions']} | "
                 f"Max Idle: {res['longest_idle']:.2f}s | "
                 f"Lock Err: {err_str:>8s} | "

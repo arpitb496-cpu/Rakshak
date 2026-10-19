@@ -8,6 +8,7 @@ Usage:
 
 import sys
 import os
+from typing import Optional
 import subprocess
 import argparse
 
@@ -32,14 +33,14 @@ def ensure_venv_execution():
         sys.exit(result.returncode)
 
 
-def run_benchmark(num_layouts: int = 20, max_frames: int = 3000):
+def run_benchmark(num_layouts: int = 20, max_frames: int = 3000, seed: Optional[int] = None):
     """
     Headless benchmark mode across 20 randomized disaster layouts.
     Validates perception, planning, collision avoidance, and localization accuracy.
     """
     os.environ["SDL_VIDEODRIVER"] = "dummy"
     from tests.test_random_layouts import execute_benchmark
-    return execute_benchmark(num_layouts=num_layouts, max_frames=max_frames)
+    return execute_benchmark(num_layouts=num_layouts, max_frames=max_frames, seed=seed)
 
 
 def main():
@@ -57,7 +58,7 @@ def main():
     args = parser.parse_args()
 
     if args.benchmark:
-        run_benchmark(num_layouts=args.layouts, max_frames=args.max_frames)
+        run_benchmark(num_layouts=args.layouts, max_frames=args.max_frames, seed=args.seed)
     elif args.demo:
         from app import RakshakApp
         app = RakshakApp(fps=30, demo_mode=True, demo_output="demo.mp4", demo_layouts=3, parallel_mode=args.parallel)
