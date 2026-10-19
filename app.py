@@ -44,6 +44,7 @@ class RakshakApp:
         fps: int = 60,
         lite_mode: bool = False,
         demo_mode: bool = False,
+        seed: int = None,
         demo_output: str = "demo.mp4",
         demo_layouts: int = 3,
         parallel_mode: bool = False,
@@ -54,6 +55,7 @@ class RakshakApp:
         pygame.font.init()
         pygame.display.set_caption("Rakshak - Autonomous Search & Rescue Robot | Hack in Hills '26")
 
+        self.seed = seed
         self.fps = 30 if (lite_mode or demo_mode) else fps
         self.lite_mode = lite_mode
         self.demo_mode = demo_mode
@@ -223,6 +225,12 @@ class RakshakApp:
     def _init_system(self):
         """Initializes all modular robotics subsystems."""
         self.arena = DisasterArena(width=self.ARENA_WIDTH, height=self.ARENA_HEIGHT)
+        if self.seed is not None:
+            import random as _random
+            import numpy as _np
+            _random.seed(self.seed)
+            _np.random.seed(self.seed)
+            self.arena.randomize_layout(seed=self.seed)
         self.robot = DifferentialDriveRobot(x=90.0, y=90.0, theta=0.4)
         self.camera = RobotCamera(width=160, height=90, fov_deg=65.0, max_range=340.0)
         self.detector = VisionDetector(focal_length=self.camera.focal_length, cx=self.camera.cx, cy=self.camera.cy)
@@ -1508,6 +1516,7 @@ def main():
     parser.add_argument("--parallel", action="store_true", help="Run multi-agent parallel search mode")
     parser.add_argument("--priority", dest="priority", action="store_true", default=True, help="Enable Priority mode (default: ON)")
     parser.add_argument("--no-priority", dest="priority", action="store_false", help="Disable Priority mode (rescue as found)")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducible arena layout")
     args, unknown = parser.parse_known_args()
 
     app = RakshakApp(
@@ -1516,6 +1525,7 @@ def main():
         parallel_mode=args.parallel,
         fullscreen=args.fullscreen,
         priority_mode=args.priority,
+        seed=args.seed,
     )
     app.run()
 

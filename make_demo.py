@@ -112,12 +112,12 @@ def add_title_bar(frame, text, sim_t):
     return np.vstack([bar, frame])
 
 
-def main(out_path):
+def main(out_path, seed=None):
     pygame.init()
     pygame.font.init()
 
     # Create the app (windowed 1280x720, Priority mode ON)
-    app = RakshakApp(fps=TARGET_FPS, priority_mode=True)
+    app = RakshakApp(fps=TARGET_FPS, priority_mode=True, seed=seed)
 
     # Override: write OUR video, not the built-in demo writer
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -204,7 +204,8 @@ def main(out_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Rakshak scripted demo recorder")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducible layout")
     parser.add_argument("--out", default="demo.mp4",
                         help="Output video filename (default: demo.mp4)")
     args = parser.parse_args()
-    main(args.out)
+    main(args.out, seed=args.seed)
