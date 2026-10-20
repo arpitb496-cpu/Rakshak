@@ -39,7 +39,7 @@ dispatches up to three rescuers in priority order — all without human interven
 | **Camera noise** | Gaussian pixel noise + drifting smoke haze (toggle `N`) |
 | **Fullscreen** | `F`/`F11`; Retina-safe letterbox scaling; mouse coords remapped |
 | **Manual override** | `M` → steer with WASD, `E` lock, `Enter` dispatch, `X` extract |
-| **95 tests** | Full pytest suite covering FSM, tracker, detector, vision, dispatch, coverage, hazard, manual mode, triage, seed reproducibility |
+| **96 tests** | Full pytest suite covering FSM, tracker, detector, vision, dispatch, coverage, hazard, manual mode, triage, seed reproducibility |
 
 ---
 
@@ -158,10 +158,10 @@ Evaluated headlessly via `.venv/bin/python run.py --benchmark`:
 | **Reach rate** | **100.0%** (20/20 layouts reached) | **100.0%** (100/100 layouts reached) |
 | **Collision count** | **0** (zero collisions) | **0** (zero collisions) |
 | **Longest idle time** | **0.20 s** | **0.20 s** |
-| **Median localization error** | **8.92 px** (at lock time) | **5.84 px** (at lock time) |
+| **Median localization error** | **8.80 px** (at lock time) | **5.62 px** (at lock time) |
 | **Median rescue error** | **2.25 px** (at rescue standoff) | **2.47 px** (at rescue standoff) |
 | **Triage accuracy** | **100.0%** (25/25 targets) | **96.5%** (109/113 targets) |
-| **Test suite** | **95 tests passing** in pytest | **95 tests passing** in pytest |
+| **Test suite** | **96 tests passing** in pytest | **96 tests passing** in pytest |
 
 #### Benchmark Confusion Matrices (Rows = Ground Truth, Columns = Perceived)
 
@@ -214,7 +214,7 @@ Evaluated headlessly via `.venv/bin/python run.py --benchmark`:
 ## Test Suite
 
 ```bash
-.venv/bin/python -m pytest tests/ -v    # run all 95 tests
+.venv/bin/python -m pytest tests/ -v    # run all 96 tests
 .venv/bin/python -m pytest tests/ -q    # quiet summary
 ```
 

@@ -207,12 +207,13 @@ class VisionTracker:
                 track = self.survivor_tracks[best_track_id]
                 matched_track_ids.add(best_track_id)
 
-                # Exponential smoothing filter
-                track.est_world_x = self.alpha * meas_x + (1.0 - self.alpha) * track.est_world_x
-                track.est_world_y = self.alpha * meas_y + (1.0 - self.alpha) * track.est_world_y
-                track.est_range = self.alpha * z + (1.0 - self.alpha) * track.est_range
-                track.est_bearing = self.alpha * bearing + (1.0 - self.alpha) * track.est_bearing
-                track.mask_area_ratio = det.mask_area_ratio
+                # Exponential smoothing filter (frozen once secured)
+                if not track.is_secured:
+                    track.est_world_x = self.alpha * meas_x + (1.0 - self.alpha) * track.est_world_x
+                    track.est_world_y = self.alpha * meas_y + (1.0 - self.alpha) * track.est_world_y
+                    track.est_range = self.alpha * z + (1.0 - self.alpha) * track.est_range
+                    track.est_bearing = self.alpha * bearing + (1.0 - self.alpha) * track.est_bearing
+                    track.mask_area_ratio = det.mask_area_ratio
                 # Accumulate perceived triage votes (last 8 frames only)
                 if not track.triage_frozen:
                     track.triage_history.append(det.triage_level)
