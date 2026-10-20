@@ -36,6 +36,7 @@ from tracker import VisionTracker
 from apf import APFController
 from astar import AStarPlanner
 from fsm import MissionFSM, MissionState
+from rescuer import RescuerState
 
 
 def run_single_layout(seed: int, max_frames: int = 3000, dt: float = 1.0 / 30.0, priority_mode: bool = False):
@@ -57,6 +58,9 @@ def run_single_layout(seed: int, max_frames: int = 3000, dt: float = 1.0 / 30.0,
     collisions = 0
     reached = False
     longest_idle = 0.0
+    physically_secured_ids = set()
+    rescues_over_85px = 0
+    prev_rescuer_states = {r.name: r.state for r in arena.rescuers}
 
     for frame in range(max_frames):
         # 1. Collision check: robot center must NEVER overlap obstacle, hazard, rescuer, or wall
@@ -82,6 +86,20 @@ def run_single_layout(seed: int, max_frames: int = 3000, dt: float = 1.0 / 30.0,
         fsm.update(dt)
         robot.update_kinematics(dt, arena)
         robot.scan_proximity_sensors(arena)
+
+        # Monitor physical security at rescuer extraction (standoff)
+        for r in arena.rescuers:
+            old_st = prev_rescuer_states.get(r.name)
+            new_st = r.state
+            if old_st != RescuerState.EXTRACTING and new_st == RescuerState.EXTRACTING:
+                survs = arena.survivors if (hasattr(arena, "survivors") and arena.survivors) else [arena.survivor]
+                close_s = [s for s in survs if math.hypot(s.x - r.x, s.y - r.y) <= 85.0]
+                if close_s:
+                    for cs in close_s:
+                        physically_secured_ids.add(cs.id)
+                else:
+                    rescues_over_85px += 1
+            prev_rescuer_states[r.name] = new_st
 
         # Invariant check: never stationary > 3.0s outside MISSION_COMPLETE
         if fsm.idle_timer > longest_idle:
@@ -142,11 +160,15 @@ def run_single_layout(seed: int, max_frames: int = 3000, dt: float = 1.0 / 30.0,
     )
     survivors_secured = sum(1 for s in arena.survivors if s.is_secured) if hasattr(arena, "survivors") and arena.survivors else (1 if reached else 0)
     total_survivors = len(arena.survivors) if hasattr(arena, "survivors") and arena.survivors else 1
+    survs_list = arena.survivors if (hasattr(arena, "survivors") and arena.survivors) else [arena.survivor]
+    all_physically_secured = all(s.id in physically_secured_ids for s in survs_list)
 
     return {
         "seed": seed,
         "reached": (all_done or fsm.current_state == MissionState.MISSION_COMPLETE) if priority_mode else reached,
         "all_secured": (all_done or fsm.current_state == MissionState.MISSION_COMPLETE),
+        "all_physically_secured": all_physically_secured,
+        "rescues_over_85px": rescues_over_85px,
         "survivors_secured": survivors_secured,
         "total_survivors": total_survivors,
         "unmatched_locks": len(getattr(tracker, "unmatched_lock_tracks", set())),
@@ -250,6 +272,10 @@ def execute_benchmark(
     reach_rate = reached_count / float(num_layouts)
     all_secured_count = sum(1 for r in results if r.get("all_secured", False))
     all_secured_rate = all_secured_count / float(num_layouts)
+    all_physically_secured_count = sum(1 for r in results if r.get("all_physically_secured", False))
+    all_physically_secured_rate = all_physically_secured_count / float(num_layouts)
+    total_rescues_over_85px = sum(r.get("rescues_over_85px", 0) for r in results)
+    rescues_over_50px = sum(1 for e in rescue_errors if e > 50.0)
     median_mission_time = statistics.median(mission_times) if mission_times else 0.0
     median_lock_error = statistics.median(lock_errors) if lock_errors else 999.0
     mean_lock_error = statistics.mean(lock_errors) if lock_errors else 999.0
@@ -259,7 +285,10 @@ def execute_benchmark(
 
     print("-" * 78)
     if priority_mode:
-        print(f"All-survivors-secured rate: {all_secured_count}/{num_layouts} ({all_secured_rate * 100:.1f}%)")
+        print(f"All secured (logical):     {all_secured_count}/{num_layouts} ({all_secured_rate * 100:.1f}%)")
+        print(f"All physically secured:    {all_physically_secured_count}/{num_layouts} ({all_physically_secured_rate * 100:.1f}%)")
+        print(f"Rescues > 85 px from GT:   {total_rescues_over_85px}")
+        print(f"Rescues > 50 px error:     {rescues_over_50px} / {len(rescue_errors)}")
         print(f"Collision count:           {total_collisions}")
         print(f"Median mission time:       {median_mission_time:.1f} s")
         print(f"Median localization error: {median_lock_error:.2f} px (at lock time)")

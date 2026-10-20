@@ -671,12 +671,25 @@ class DispatchManager:
         est_y: float,
         triage: str,
         current_time: float,
+        detection_range: float = 0.0,
     ) -> bool:
-        """Submits an SOS to the rescue dispatch queue."""
+        """Submits an SOS to the rescue dispatch queue with spatial deduplication."""
         if survivor_id in self.active_sos or survivor_id in self.completed_sos:
             return False
         for s in self.sos_queue:
             if s.survivor_id == survivor_id:
+                return False
+
+        # Range-adaptive spatial deduplication: skip if SOS for same physical survivor is already queued/active
+        gate = min(60.0, 45.0 + 0.1 * detection_range)
+        for s in self.active_sos.values():
+            if math.hypot(est_x - s.est_x, est_y - s.est_y) < gate:
+                return False
+        for s in self.sos_queue:
+            if math.hypot(est_x - s.est_x, est_y - s.est_y) < gate:
+                return False
+        for s in self.completed_sos.values():
+            if (s.est_x > 0.0 or s.est_y > 0.0) and math.hypot(est_x - s.est_x, est_y - s.est_y) < gate:
                 return False
 
         sos = SOSMessage(

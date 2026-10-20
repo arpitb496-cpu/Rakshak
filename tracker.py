@@ -205,8 +205,9 @@ class VisionTracker:
                     min_dist = d
                     best_track_id = tid
 
-            # Gating threshold: 85.0 pixels
-            if best_track_id is not None and min_dist < 85.0:
+            # Gating threshold: 85.0 pixels + 0.4 * detection range (range-adaptive gate)
+            assoc_gate = min(115.0, 85.0 + 0.4 * z)
+            if best_track_id is not None and min_dist < assoc_gate:
                 track = self.survivor_tracks[best_track_id]
                 matched_track_ids.add(best_track_id)
 

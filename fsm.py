@@ -244,6 +244,7 @@ class MissionFSM:
                 set(self.dispatch_manager.completed_sos.keys())
                 | set(self.dispatch_manager.active_sos.keys())
                 | {s.survivor_id for s in self.dispatch_manager.sos_queue}
+                | self.sent_sos_ids
             )
             for trk in self.tracker.survivor_tracks.values():
                 if trk.target_id not in known_ids and not trk.is_secured:
@@ -262,6 +263,7 @@ class MissionFSM:
                         est_y=trk.est_world_y,
                         triage=trk.triage_level,
                         current_time=self.mission_time,
+                        detection_range=getattr(trk, "est_range", 0.0),
                     )
                     self.sent_sos_ids.add(trk.target_id)
                     ref_pos = (self.robot.x, self.robot.y)
@@ -279,6 +281,28 @@ class MissionFSM:
                         self.log(f"[TRIAGE] Switching target from {curr_id} to higher-priority {trk.target_id} [{trk.triage_level}].")
                         self._start_rescue_for_sos(self.dispatch_manager.sos_queue[0])
                         break
+        # Refresh dispatched rescuer target to live estimate once track has >= 5 measurements
+        for r in self.arena.rescuers:
+            if r.state == RescuerState.DISPATCHED and getattr(r, "assigned_survivor_id", None):
+                trk = self.tracker.survivor_tracks.get(r.assigned_survivor_id)
+                if trk and hasattr(trk, "recent_measurements") and len(trk.recent_measurements) >= 5:
+                    new_target = (trk.est_world_x, trk.est_world_y)
+                    if r.target_pos is None:
+                        r.target_pos = new_target
+                    else:
+                        shift = math.hypot(new_target[0] - r.target_pos[0], new_target[1] - r.target_pos[1])
+                        if shift > 10.0:
+                            r.target_pos = new_target
+                            if self.astar is not None:
+                                new_path = self.astar.plan_path((r.x, r.y), new_target, self.arena, ignore_rescuer_id=r.id)
+                                if new_path:
+                                    r.path = new_path
+                                    r.path_idx = 0
+                        else:
+                            r.target_pos = new_target
+                            if r.path:
+                                r.path[-1] = new_target
+
         for r in self.arena.rescuers:
             r.update(
                 dt,
@@ -614,6 +638,7 @@ class MissionFSM:
                         est_y=trk.est_world_y,
                         triage=trk.triage_level,
                         current_time=self.mission_time,
+                        detection_range=getattr(trk, "est_range", 0.0),
                     )
                     self.sent_sos_ids.add(trk.target_id)
                     self.log(
@@ -658,6 +683,7 @@ class MissionFSM:
                         est_y=trk.est_world_y,
                         triage=trk.triage_level,
                         current_time=self.mission_time,
+                        detection_range=getattr(trk, "est_range", 0.0),
                     )
                     self.log(f"[TRIAGE] Post-sweep queued {trk.target_id} [{trk.triage_level}]")
             if self.dispatch_manager.sos_queue:
@@ -793,6 +819,10 @@ class MissionFSM:
         if sos.survivor_id in self.tracker.survivor_tracks:
             self.tracker.active_track_id = sos.survivor_id
             self.tracker.survivor_tracks[sos.survivor_id].is_locked = True
+            trk = self.tracker.survivor_tracks[sos.survivor_id]
+            if hasattr(trk, "recent_measurements") and len(trk.recent_measurements) >= 5:
+                sos.est_x = trk.est_world_x
+                sos.est_y = trk.est_world_y
 
         dx = self.robot.x - sos.est_x
         dy = self.robot.y - sos.est_y
