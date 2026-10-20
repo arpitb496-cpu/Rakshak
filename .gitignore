@@ -27,3 +27,5 @@ demo.mp4
 
 # macOS
 .DS_Store
+
+.worktree_*/
