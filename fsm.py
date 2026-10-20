@@ -289,6 +289,7 @@ class MissionFSM:
                 self.mission_time,
                 planner=self.astar,
                 manual_mode=self.manual_mode,
+                dispatch_manager=self.dispatch_manager,
             )
 
         # Phase 4: Dynamic Hazard Expansion Re-planning

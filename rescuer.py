@@ -141,6 +141,8 @@ class RescuerAgent:
         self.extraction_timer: float = 0.0
         self.extraction_duration: float = 3.0
         self.stuck_timer: float = 0.0
+        self.replan_count: int = 0
+        self._next_replan_thresh: float = 2.0
 
         # Statistics
         self.survivors_rescued: int = 0
@@ -181,6 +183,91 @@ class RescuerAgent:
         if self.state == RescuerState.EXTRACTING:
             self.extraction_timer = self.extraction_duration
 
+    def _find_nearest_free_pose(
+        self, arena, scout_pos: Optional[Tuple[float, float]], other_rescuers: List["RescuerAgent"]
+    ) -> Optional[Tuple[float, float]]:
+        """Finds nearest free cell when stuck inside or adjacent to shifted rubble."""
+        wall_pad = 18.0
+        for r in range(10, 80, 10):
+            for step_i in range(16):
+                ang = step_i * (2.0 * math.pi / 16.0)
+                cx = self.x + r * math.cos(ang)
+                cy = self.y + r * math.sin(ang)
+                if cx < wall_pad or cx > (arena.width - wall_pad) or cy < wall_pad or cy > (arena.height - wall_pad):
+                    continue
+                if arena.is_point_colliding(cx, cy, margin=self.radius + 2.0):
+                    continue
+                if arena.is_inside_hazard(cx, cy, margin=self.radius + 2.0):
+                    continue
+                if scout_pos is not None and math.hypot(cx - scout_pos[0], cy - scout_pos[1]) < (self.radius + 18.0):
+                    continue
+                if any(o.id != self.id and math.hypot(cx - o.x, cy - o.y) < 26.0 for o in other_rescuers):
+                    continue
+                return (cx, cy)
+        return None
+
+    def _handle_stuck(
+        self,
+        dt: float,
+        arena,
+        scout_pos,
+        other_rescuers,
+        is_returning: bool,
+        message_bus: MessageBus,
+        current_time: float,
+        planner=None,
+        dispatch_manager=None,
+    ) -> Optional[str]:
+        """
+        Handles replanning on rubble shift:
+        - Replan A* if stuck > 2s (with safety inflation >= rescuer radius + margin)
+        - Push to nearest free cell if still stuck after 3 replans
+        - Release SOS back to queue and return home if still stuck after 10s
+        - Hard cap on stuck_timer
+        """
+        if self.stuck_timer > 10.0:
+            self.stuck_timer = 10.0
+
+        if self.stuck_timer >= 10.0:
+            if not is_returning and self.assigned_survivor_id:
+                sid = self.assigned_survivor_id
+                if dispatch_manager is not None:
+                    dispatch_manager.release_sos(sid)
+                message_bus.send(
+                    msg_type="RELEASE_SOS",
+                    sender=self.name,
+                    recipient="DISPATCHER",
+                    payload={"rescuer_id": self.name, "survivor_id": sid},
+                    current_time=current_time,
+                )
+                self.state = RescuerState.RETURNING
+                self.assigned_survivor_id = None
+                self.target_pos = None
+                self.replan_count = 0
+                self.stuck_timer = 0.0
+                self._next_replan_thresh = 2.0
+                if planner is not None:
+                    self.path = planner.plan_path((self.x, self.y), (self.home_x, self.home_y), arena, ignore_rescuer_id=self.id)
+                else:
+                    self.path = [(self.home_x, self.home_y)]
+                self.path_idx = 0
+                return f"RELEASED:{self.name}:{sid}"
+
+        elif self.stuck_timer >= self._next_replan_thresh:
+            self.replan_count += 1
+            self._next_replan_thresh += 2.0
+            if self.replan_count > 3:
+                free_pose = self._find_nearest_free_pose(arena, scout_pos, other_rescuers)
+                if free_pose is not None:
+                    self.x, self.y = free_pose
+            if planner is not None:
+                target = self.target_pos if (not is_returning and self.target_pos) else (self.home_x, self.home_y)
+                new_path = planner.plan_path((self.x, self.y), target, arena, ignore_rescuer_id=self.id)
+                if new_path:
+                    self.path = new_path
+                    self.path_idx = 0
+        return None
+
     def update(
         self,
         dt: float,
@@ -191,6 +278,7 @@ class RescuerAgent:
         current_time: float,
         planner=None,
         manual_mode: bool = False,
+        dispatch_manager=None,
     ) -> Optional[str]:
         """
         Executes one physics and navigation step.
@@ -247,6 +335,7 @@ class RescuerAgent:
             event = self._follow_path(
                 dt, arena, scout_pos, other_rescuers, is_returning=False,
                 message_bus=message_bus, current_time=current_time,
+                planner=planner, dispatch_manager=dispatch_manager,
                 manual_mode=manual_mode,
             )
 
@@ -305,6 +394,7 @@ class RescuerAgent:
             event = self._follow_path(
                 dt, arena, scout_pos, other_rescuers, is_returning=True,
                 message_bus=message_bus, current_time=current_time,
+                planner=planner, dispatch_manager=dispatch_manager,
                 manual_mode=manual_mode,
             )
 
@@ -319,6 +409,8 @@ class RescuerAgent:
         is_returning: bool,
         message_bus: MessageBus,
         current_time: float,
+        planner=None,
+        dispatch_manager=None,
         manual_mode: bool = False,
     ) -> Optional[str]:
         """Moves along waypoints while enforcing hard collision checks."""
@@ -388,6 +480,16 @@ class RescuerAgent:
                     return f"ARRIVED:{self.name}:{self.assigned_survivor_id}"
 
         wp = self.path[self.path_idx]
+        # Replan if next waypoint is blocked by a shifted obstacle or hazard
+        if (arena.is_point_colliding(wp[0], wp[1], margin=self.radius + 2.0) or
+                arena.is_inside_hazard(wp[0], wp[1], margin=self.radius + 2.0)):
+            if planner is not None:
+                target = self.target_pos if (not is_returning and self.target_pos) else (self.home_x, self.home_y)
+                new_p = planner.plan_path((self.x, self.y), target, arena, ignore_rescuer_id=self.id)
+                if new_p:
+                    self.path = new_p
+                    self.path_idx = 0
+                    wp = self.path[self.path_idx]
         dx = wp[0] - self.x
         dy = wp[1] - self.y
         dist_wp = math.hypot(dx, dy)
@@ -396,7 +498,8 @@ class RescuerAgent:
             self.path_idx += 1
             if self.path_idx >= len(self.path):
                 return self._follow_path(
-                    dt, arena, scout_pos, other_rescuers, is_returning, message_bus, current_time, manual_mode=manual_mode
+                    dt, arena, scout_pos, other_rescuers, is_returning, message_bus, current_time,
+                    planner=planner, dispatch_manager=dispatch_manager, manual_mode=manual_mode
                 )
             wp = self.path[self.path_idx]
             dx = wp[0] - self.x
@@ -420,12 +523,12 @@ class RescuerAgent:
         # Obstacle check
         if arena.is_point_colliding(cand_x, cand_y, margin=self.radius + 2.0):
             self.stuck_timer += dt
-            return None
+            return self._handle_stuck(dt, arena, scout_pos, other_rescuers, is_returning, message_bus, current_time, planner, dispatch_manager)
 
         # Hazard check
         if arena.is_inside_hazard(cand_x, cand_y, margin=self.radius + 2.0):
             self.stuck_timer += dt
-            return None
+            return self._handle_stuck(dt, arena, scout_pos, other_rescuers, is_returning, message_bus, current_time, planner, dispatch_manager)
 
         # Scout robot dynamic separation (keep >= radius sum + 6px)
         dist_scout = math.hypot(cand_x - scout_pos[0], cand_y - scout_pos[1])
@@ -445,7 +548,7 @@ class RescuerAgent:
                         break
             if not detour_found:
                 self.stuck_timer += dt
-                return None
+                return self._handle_stuck(dt, arena, scout_pos, other_rescuers, is_returning, message_bus, current_time, planner, dispatch_manager)
 
         # Other rescuers dynamic separation (keep >= 26px)
         for other in other_rescuers:
@@ -454,12 +557,17 @@ class RescuerAgent:
                 if d_other < 26.0 and other.id < self.id:
                     # Yield to lower ID rescuer
                     self.stuck_timer += dt
-                    return None
+                    return self._handle_stuck(dt, arena, scout_pos, other_rescuers, is_returning, message_bus, current_time, planner, dispatch_manager)
 
         if math.hypot(cand_x - self.x, cand_y - self.y) < 0.1:
             self.stuck_timer += dt
+            stuck_event = self._handle_stuck(dt, arena, scout_pos, other_rescuers, is_returning, message_bus, current_time, planner, dispatch_manager)
+            if stuck_event:
+                return stuck_event
         else:
             self.stuck_timer = 0.0
+            self.replan_count = 0
+            self._next_replan_thresh = 2.0
 
         self.vx = (cand_x - self.x) / max(1e-4, dt)
         self.vy = (cand_y - self.y) / max(1e-4, dt)
@@ -511,6 +619,18 @@ class DispatchManager:
     def triage_rank(triage: str) -> int:
         """Returns priority rank (lower value = higher priority)."""
         return triage_rank(triage)
+
+    def release_sos(self, survivor_id: str):
+        """Releases an active SOS back to the queue so another rescuer can take it."""
+        sos = None
+        if survivor_id in self.active_sos:
+            sos = self.active_sos.pop(survivor_id)
+        if sos is not None:
+            sos.status = "PENDING"
+            sos.assigned_rescuer_id = None
+            sos.dispatch_time = None
+            if not any(s.survivor_id == survivor_id for s in self.sos_queue):
+                self.sos_queue.insert(0, sos)
 
     def submit_sos(
         self,
@@ -642,6 +762,14 @@ class DispatchManager:
                 p = msg.payload
                 if log_callback:
                     log_callback(f"[COMM] ACK: Rescuer {p['rescuer_id']} dispatched to {p['survivor_id']}.")
+
+            elif msg.msg_type == "RELEASE_SOS":
+                p = msg.payload
+                sid = p.get("survivor_id")
+                if sid:
+                    self.release_sos(sid)
+                if log_callback:
+                    log_callback(f"[COMM] RELEASE: Rescuer {p.get('rescuer_id')} released {sid} back to queue.")
 
             elif msg.msg_type == "ARRIVED":
                 p = msg.payload
