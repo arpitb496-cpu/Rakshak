@@ -1122,6 +1122,7 @@ class MissionFSM:
             "max_localization_error_px": round(max_loc_err, 2),
             "mean_localization_error_px": round(mean_loc_err, 2),
             "triage_accuracy_pct": self.tracker.triage_accuracy(),
+            "unmatched_lock_count": len(getattr(self.tracker, "unmatched_lock_tracks", set())),
         }
         return report
 

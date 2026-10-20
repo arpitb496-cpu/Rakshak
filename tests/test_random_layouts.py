@@ -149,6 +149,7 @@ def run_single_layout(seed: int, max_frames: int = 3000, dt: float = 1.0 / 30.0,
         "all_secured": (all_done or fsm.current_state == MissionState.MISSION_COMPLETE),
         "survivors_secured": survivors_secured,
         "total_survivors": total_survivors,
+        "unmatched_locks": len(getattr(tracker, "unmatched_lock_tracks", set())),
         "mission_time": fsm.mission_time,
         "collisions": collisions,
         "longest_idle": longest_idle,
@@ -254,6 +255,7 @@ def execute_benchmark(
     mean_lock_error = statistics.mean(lock_errors) if lock_errors else 999.0
     max_lock_error = max(lock_errors) if lock_errors else 999.0
     median_rescue_error = statistics.median(rescue_errors) if rescue_errors else 999.0
+    total_unmatched_locks = sum(r.get("unmatched_locks", 0) for r in results)
 
     print("-" * 78)
     if priority_mode:
@@ -264,6 +266,7 @@ def execute_benchmark(
         print(f"Mean localization error:   {mean_lock_error:.2f} px (at lock time)")
         print(f"Max localization error:    {max_lock_error:.2f} px (at lock time)")
         print(f"Median rescue error:       {median_rescue_error:.2f} px (at rescue standoff)")
+        print(f"Unmatched lock count:      {total_unmatched_locks}")
     else:
         print(f"Reach rate:                {reached_count}/{num_layouts} ({reach_rate * 100:.1f}%)")
         print(f"Collision count:           {total_collisions}")
@@ -272,6 +275,7 @@ def execute_benchmark(
         print(f"Mean localization error:   {mean_lock_error:.2f} px (at lock time)")
         print(f"Max localization error:    {max_lock_error:.2f} px (at lock time)")
         print(f"Median rescue error:       {median_rescue_error:.2f} px (at rescue standoff)")
+        print(f"Unmatched lock count:      {total_unmatched_locks}")
 
     # Aggregate triage metrics
     all_triage_records = []
@@ -328,6 +332,7 @@ def execute_benchmark(
         "mean_lock_error": mean_lock_error,
         "max_lock_error": max_lock_error,
         "median_rescue_error": median_rescue_error,
+        "unmatched_lock_count": total_unmatched_locks,
         "triage_accuracy": triage_acc_pct,
         "triage_total": total_triage,
         "triage_correct": correct_triage,

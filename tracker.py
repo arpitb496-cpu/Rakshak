@@ -76,6 +76,9 @@ class VisionTracker:
         self.track_lock_errors: dict[str, float] = {}
         self._last_error_at_lock: Optional[float] = None
         self.error_at_rescue: Optional[float] = None
+        self._next_track_num: int = 1
+        self.all_created_track_ids: set[str] = set()
+        self.unmatched_lock_tracks: set[str] = set()
 
         # Friendly rescuer tracks
         self.rescuer_tracks: List[TrackedTarget] = []
@@ -313,7 +316,18 @@ class VisionTracker:
                         # GT triage stored for metrics; dispatch uses perceived label only
                         _gt_triage = getattr(best_cand, "triage", "")
 
-                new_id = matched_id if matched_id else f"S{len(self.survivor_tracks) + 1}"
+                if matched_id and matched_id not in self.all_created_track_ids and matched_id not in self.survivor_tracks:
+                    new_id = matched_id
+                    if matched_id.startswith("S") and matched_id[1:].isdigit():
+                        self._next_track_num = max(self._next_track_num, int(matched_id[1:]) + 1)
+                else:
+                    while True:
+                        cand_id = f"S{self._next_track_num}"
+                        self._next_track_num += 1
+                        if cand_id not in self.all_created_track_ids and cand_id not in self.survivor_tracks:
+                            new_id = cand_id
+                            break
+                self.all_created_track_ids.add(new_id)
                 new_track = TrackedTarget(
                     class_label="SURVIVOR",
                     target_id=new_id,
@@ -343,9 +357,11 @@ class VisionTracker:
                 if trk.frames_since_seen > 3:
                     trk.recent_measurements.clear()
                 if trk.frames_since_seen > self.max_lost_frames:
-                    trk.is_locked = False
+                    if not trk.is_secured:
+                        trk.is_locked = False
                 if trk.frames_since_seen > self.max_lost_frames * 3:
-                    del self.survivor_tracks[tid]
+                    if not trk.is_secured:
+                        del self.survivor_tracks[tid]
 
         # Update active track ID
         if not self.active_track_id or self.active_track_id not in self.survivor_tracks:
@@ -390,10 +406,11 @@ class VisionTracker:
                 )
             )
 
-    def compute_lock_error(self, track: TrackedTarget, ground_truth=None) -> Optional[float]:
+    def compute_lock_error(self, track: TrackedTarget, ground_truth=None, gate_threshold: float = 85.0) -> Optional[float]:
         """
         Computes localization error for a track measured against that survivor's own ground truth.
-        Prioritizes exact survivor ID match; falls back to nearest spatial candidate.
+        Checks spatial gate (gate_threshold). If no ground-truth survivor is within the gate, returns None.
+        Does NOT silently re-associate cross-arena tracks.
         """
         gt_source = ground_truth if ground_truth is not None else getattr(self, "_last_ground_truth", None)
         if gt_source is None:
@@ -403,29 +420,48 @@ class VisionTracker:
             return None
         def _pt(p):
             return (p.x, p.y) if hasattr(p, "x") else (p[0], p[1])
+        # 1. Exact survivor ID match
         for c in cands:
             if getattr(c, "id", None) == track.target_id:
                 gt_x, gt_y = _pt(c)
-                return float(math.hypot(track.est_world_x - gt_x, track.est_world_y - gt_y))
-        best_gt = min(
-            cands,
-            key=lambda p: math.hypot(track.est_world_x - _pt(p)[0], track.est_world_y - _pt(p)[1]),
-        )
-        gt_x, gt_y = _pt(best_gt)
-        return float(math.hypot(track.est_world_x - gt_x, track.est_world_y - gt_y))
+                err = float(math.hypot(track.est_world_x - gt_x, track.est_world_y - gt_y))
+                if err <= gate_threshold:
+                    return err
+                # ID matches but is beyond gate: do NOT silently re-associate, treat as unmatched
+                return None
+        # 2. If track ID is not among candidates, check if nearest candidate is within gate
+        best_cand = None
+        best_dist = float("inf")
+        for c in cands:
+            gt_x, gt_y = _pt(c)
+            d = float(math.hypot(track.est_world_x - gt_x, track.est_world_y - gt_y))
+            if d < best_dist:
+                best_dist = d
+                best_cand = c
+        if best_dist <= gate_threshold:
+            return best_dist
+        return None
 
-    def record_lock_error(self, track: TrackedTarget, ground_truth=None) -> Optional[float]:
+    def record_lock_error(self, track: TrackedTarget, ground_truth=None, gate_threshold: float = 85.0) -> Optional[float]:
         """
         Shared function: measures and records error_at_lock at the moment a track first becomes locked,
-        against that survivor's own ground truth.
+        against that survivor's own ground truth. Never overwrites existing lock error for the same track.
+        If outside gate, marks track as unmatched.
         """
+        if track.target_id in self.track_lock_errors:
+            return self.track_lock_errors[track.target_id]
+        if track.target_id in self.unmatched_lock_tracks:
+            return None
         if track.error_at_lock is not None:
+            self.track_lock_errors[track.target_id] = track.error_at_lock
             return track.error_at_lock
-        err = self.compute_lock_error(track, ground_truth)
+        err = self.compute_lock_error(track, ground_truth, gate_threshold=gate_threshold)
         if err is not None:
             track.error_at_lock = err
             self.track_lock_errors[track.target_id] = err
             self._last_error_at_lock = err
+        else:
+            self.unmatched_lock_tracks.add(track.target_id)
         return err
 
     def is_survivor_locked(self) -> bool:
@@ -486,5 +522,8 @@ class VisionTracker:
         self.has_locked = False
         self.error_at_lock = None
         self.error_at_rescue = None
+        self._next_track_num = 1
+        self.all_created_track_ids.clear()
+        self.unmatched_lock_tracks.clear()
         self.last_localization_error = None
         self.cumulative_readings = 0
