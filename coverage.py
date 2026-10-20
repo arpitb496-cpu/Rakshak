@@ -107,6 +107,47 @@ class CoverageGrid:
         scanned_count = int(np.sum(self.grid & self.accessible_mask))
         return (scanned_count / float(self.total_accessible)) * 100.0
 
+    def get_largest_unscanned_checkpoint(self, robot_x: float, robot_y: float, arena=None) -> Optional[Tuple[float, float]]:
+        """
+        Finds the centroid of the largest cluster of unscanned accessible cells.
+        Uses 4x4 cell blocks to identify the highest density unscanned region.
+        """
+        unseen = (~self.grid) & self.accessible_mask
+        if not np.any(unseen):
+            return None
+
+        block_h, block_w = 4, 4
+        best_count = 0
+        best_centroid = None
+
+        for r in range(0, self.rows, 2):
+            for c in range(0, self.cols, 2):
+                sub = unseen[r:r+block_h, c:c+block_w]
+                cnt = int(np.sum(sub))
+                if cnt > best_count:
+                    best_count = cnt
+                    sub_unseen = np.argwhere(sub)
+                    mr = r + float(np.mean(sub_unseen[:, 0]))
+                    mc = c + float(np.mean(sub_unseen[:, 1]))
+                    wx = (mc + 0.5) * self.cell_size
+                    wy = (mr + 0.5) * self.cell_size
+                    if arena is not None and arena.is_point_colliding(wx, wy, margin=14.0):
+                        best_d = float("inf")
+                        best_cell = None
+                        for ur, uc in sub_unseen:
+                            cr, cc = r + ur, c + uc
+                            c_wx = (cc + 0.5) * self.cell_size
+                            c_wy = (cr + 0.5) * self.cell_size
+                            if not arena.is_point_colliding(c_wx, c_wy, margin=8.0):
+                                d = math.hypot(c_wx - wx, c_wy - wy)
+                                if d < best_d:
+                                    best_d = d
+                                    best_cell = (c_wx, c_wy)
+                        if best_cell:
+                            wx, wy = best_cell
+                    best_centroid = (wx, wy)
+        return best_centroid
+
     def get_unseen_frontier_checkpoint(self, robot_x: float, robot_y: float) -> Optional[Tuple[float, float]]:
         """
         Finds an accessible unseen cell that balances proximity with high unseen density.

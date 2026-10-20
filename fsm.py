@@ -378,6 +378,19 @@ class MissionFSM:
             self.robot.stop()
             return
 
+        # Phase 3 & Fix B: Post-sweep coverage target (>= 95%) or low battery return to base
+        if self.priority_mode and self.sweep_complete and self.current_state not in (MissionState.RETURN_TO_BASE, MissionState.MISSION_COMPLETE):
+            scanned_pct = getattr(self.coverage_grid, "percent_scanned", 0.0)
+            has_pending = bool(self.dispatch_manager.sos_queue or self.dispatch_manager.active_sos)
+            if not has_pending and (scanned_pct >= 95.0 or self.battery <= 25.0):
+                self.log(f"[COVERAGE] Area scanned {scanned_pct:.1f}% (target >= 95%) or battery {self.battery:.1f}%. Returning to base.")
+                self.transition_to(MissionState.RETURN_TO_BASE, "Coverage >= 95% or low battery.")
+                self.active_path = self.astar.plan_path((self.robot.x, self.robot.y), self.base_station, self.arena)
+                self.current_waypoint_idx = 0
+                self.patrol_path.clear()
+                self.robot.stop()
+                return
+
         # Track idle / stationary duration outside MISSION_COMPLETE and not in manual mode
         if not self.manual_mode and self.current_state != MissionState.MISSION_COMPLETE:
             d_pos = math.hypot(self.robot.x - self.last_pos[0], self.robot.y - self.last_pos[1])
@@ -412,21 +425,32 @@ class MissionFSM:
             arena=self.arena,
         )
 
-        # Phase 3: Battery drain model
+        # Phase 3: Battery drain model (clamped at 0.0%)
         if self.current_state != MissionState.RETURN_TO_BASE:
             b_drain = (0.0035 * abs(self.robot.v) + 0.02 * abs(self.robot.omega) + 0.025) * dt
             self.battery = max(0.0, self.battery - b_drain)
             self.total_battery_drained += b_drain
 
-        # Low battery trigger (<25% with remaining un-secured survivors)
+        # Clamp battery at 0%; stop robot and end mission if depleted
+        if self.battery <= 0.0:
+            self.battery = 0.0
+            self.robot.stop()
+            if self.current_state != MissionState.MISSION_COMPLETE:
+                self.log("[BATTERY] Battery depleted to 0.0%. Mission concluded.")
+                self.transition_to(MissionState.MISSION_COMPLETE, "Battery depleted to 0.0%.")
+            return
+
+        # Low battery trigger (<25%): head to base and end mission safely
         if (
             self.battery < 25.0
-            and self.current_state in (MissionState.SEARCH_PATROL, MissionState.PLAN_ROUTE)
+            and self.current_state in (MissionState.SEARCH_PATROL, MissionState.PLAN_ROUTE, MissionState.VERIFY_TARGET)
         ):
             if hasattr(self.arena, "survivors") and any(not s.is_secured for s in self.arena.survivors):
-                self.transition_to(MissionState.RETURN_TO_BASE, "Battery low (<25%). Returning to base.")
+                self.log(f"[BATTERY] Low battery ({self.battery:.1f}%). Returning to base.")
+                self.transition_to(MissionState.RETURN_TO_BASE, f"Low battery ({self.battery:.1f}%). Returning to base.")
                 self.active_path = self.astar.plan_path((self.robot.x, self.robot.y), self.base_station, self.arena)
                 self.current_waypoint_idx = 0
+                self.patrol_path.clear()
                 self.robot.stop()
                 return
 
@@ -519,6 +543,13 @@ class MissionFSM:
 
         if dist_to_base <= 35.0:
             self.robot.stop()
+            if self.priority_mode:
+                has_pending = bool(self.dispatch_manager.sos_queue or self.dispatch_manager.active_sos)
+                if not has_pending:
+                    self.log(f"[BATTERY] Scout safely docked at base station (battery: {self.battery:.1f}%). Mission complete.")
+                    self.transition_to(MissionState.MISSION_COMPLETE, "Scout safely docked at base station.")
+                    return
+
             self.battery = min(100.0, self.battery + 50.0 * dt)
             if self.battery >= 100.0:
                 self.battery_recharges += 1
@@ -614,6 +645,26 @@ class MissionFSM:
                 if self.dispatch_manager.sos_queue:
                     self._start_rescue_for_sos(self.dispatch_manager.sos_queue[0])
                     return
+        elif self.priority_mode and self.sweep_complete:
+            # Post-sweep in Priority mode: queue and dispatch survivors in unscanned regions
+            for trk in detected_tracks:
+                if trk.target_id not in self.sent_sos_ids and not trk.is_secured:
+                    self.sent_sos_ids.add(trk.target_id)
+                    trk.is_locked = True
+                    self.tracker.record_lock_error(trk, getattr(self.arena, "survivors", [self.arena.survivor]))
+                    self.dispatch_manager.submit_sos(
+                        survivor_id=trk.target_id,
+                        est_x=trk.est_world_x,
+                        est_y=trk.est_world_y,
+                        triage=trk.triage_level,
+                        current_time=self.mission_time,
+                    )
+                    self.log(f"[TRIAGE] Post-sweep queued {trk.target_id} [{trk.triage_level}]")
+            if self.dispatch_manager.sos_queue:
+                ref_pos = (self.robot.x, self.robot.y)
+                self.dispatch_manager.sos_queue.sort(key=lambda s: survivor_priority_key(s, ref_pos))
+                self._start_rescue_for_sos(self.dispatch_manager.sos_queue[0])
+                return
         elif not self.priority_mode:
             # Rescue as found behavior
             if st is not None:
@@ -651,7 +702,27 @@ class MissionFSM:
                     self.robot.stop()
                     return
 
-        target_pt = self.patrol_waypoints[self.patrol_idx]
+        # Check if coverage target reached (>= 95%) or battery low post-sweep
+        if self.sweep_complete:
+            scanned_pct = getattr(self.coverage_grid, "percent_scanned", 0.0)
+            has_pending = bool(self.dispatch_manager.sos_queue or self.dispatch_manager.active_sos)
+            if not has_pending and (scanned_pct >= 95.0 or self.battery <= 25.0):
+                self.log(f"[COVERAGE] Area scanned {scanned_pct:.1f}% (target >= 95%) or battery {self.battery:.1f}%. Returning to base.")
+                self.transition_to(MissionState.RETURN_TO_BASE, "Coverage >= 95% or low battery.")
+                self.active_path = self.astar.plan_path((self.robot.x, self.robot.y), self.base_station, self.arena)
+                self.current_waypoint_idx = 0
+                self.patrol_path.clear()
+                return
+
+            # Post-sweep: use coverage.py to head toward largest unscanned regions
+            target_pt = self.coverage_grid.get_largest_unscanned_checkpoint(self.robot.x, self.robot.y, self.arena)
+            if target_pt is None:
+                target_pt = self.coverage_grid.get_unseen_frontier_checkpoint(self.robot.x, self.robot.y)
+            if target_pt is None:
+                target_pt = self.base_station
+        else:
+            target_pt = self.patrol_waypoints[self.patrol_idx]
+
         dist_to_target = math.hypot(target_pt[0] - self.robot.x, target_pt[1] - self.robot.y)
 
         # If arrived at patrol waypoint or timed out, execute a short ~120° visual scan
@@ -675,15 +746,21 @@ class MissionFSM:
                 frontier = self.coverage_grid.get_unseen_frontier_checkpoint(self.robot.x, self.robot.y)
                 if frontier is not None and self.patrol_idx % 2 == 1:
                     self.patrol_waypoints[self.patrol_idx] = frontier
-                next_idx = self.patrol_idx + 1
-                if next_idx >= len(self.patrol_waypoints):
-                    self.patrol_cycle_count += 1
-                    self.patrol_idx = 0
-                else:
-                    self.patrol_idx = next_idx
                 self.waypoint_timer = 0.0
                 self.patrol_path.clear()
-                self.log(f"[PATROL] 120° sweep complete. Routing to checkpoint {self.patrol_idx + 1}.")
+                if self.sweep_complete:
+                    self.log("[PATROL] 120° sweep complete. Re-evaluating largest unscanned region.")
+                else:
+                    frontier = self.coverage_grid.get_unseen_frontier_checkpoint(self.robot.x, self.robot.y)
+                    if frontier is not None and self.patrol_idx % 2 == 1:
+                        self.patrol_waypoints[self.patrol_idx] = frontier
+                    next_idx = self.patrol_idx + 1
+                    if next_idx >= len(self.patrol_waypoints):
+                        self.patrol_cycle_count += 1
+                        self.patrol_idx = 0
+                    else:
+                        self.patrol_idx = next_idx
+                    self.log(f"[PATROL] 120° sweep complete. Routing to checkpoint {self.patrol_idx + 1}.")
         else:
             # Plan A* path to target checkpoint if not already planned
             if not self.patrol_path or self.patrol_path_idx >= len(self.patrol_path):
@@ -816,6 +893,23 @@ class MissionFSM:
 
     def _handle_navigate_to_survivor(self, dt: float):
         """Navigates along A* waypoints using APF for local collision avoidance."""
+        # If active target was already secured by another rescuer, switch or resume search
+        active_id = getattr(self, "_active_target_id", None)
+        if active_id in self.dispatch_manager.completed_sos or any(
+            s.is_secured for s in getattr(self.arena, "survivors", []) if s.id == active_id
+        ):
+            unsecured_sos = [
+                s for s in list(self.dispatch_manager.sos_queue) + list(self.dispatch_manager.active_sos.values())
+                if s.survivor_id not in self.dispatch_manager.completed_sos and s.status != "SECURED"
+            ]
+            if self.priority_mode and unsecured_sos:
+                ref_pos = (self.robot.x, self.robot.y)
+                unsecured_sos.sort(key=lambda s: survivor_priority_key(s, ref_pos))
+                self._start_rescue_for_sos(unsecured_sos[0])
+            else:
+                self.transition_to(MissionState.SEARCH_PATROL, "Target already secured. Resuming coverage patrol.")
+            return
+
         # Prioritize higher-priority survivor if detected during transit before rescuer dispatched
         st = self.tracker.survivor_track
         if st is not None:
@@ -968,6 +1062,35 @@ class MissionFSM:
                 else:
                     self.transition_to(MissionState.VERIFY_TARGET, "Switching to higher-priority target.")
                 return
+
+        # Check if held standoff for > 6s and target survivor is either already secured or empty site
+        is_target_unsecured = any(
+            not s.is_secured and (s.id == surv_id or math.hypot(s.x - est_x, s.y - est_y) < 85.0)
+            for s in getattr(self.arena, "survivors", [])
+        )
+        if not is_target_unsecured and self.state_timer > 6.0:
+            self.log(f"[RESCUE] Target resolved at ({est_x:.1f}, {est_y:.1f}). Advancing to next target.")
+            if self.current_sos_id:
+                matched = self.dispatch_manager.active_sos.pop(self.current_sos_id, None)
+                if matched:
+                    self.dispatch_manager.completed_sos[self.current_sos_id] = matched
+                self.current_sos_id = None
+            self.current_sos_target_track = None
+            self.sos_active_pulse = False
+            self.active_path.clear()
+            self.current_waypoint_idx = 0
+            unsecured_sos = [
+                s for s in list(self.dispatch_manager.sos_queue) + list(self.dispatch_manager.active_sos.values())
+                if s.survivor_id not in self.dispatch_manager.completed_sos and s.status != "SECURED"
+            ]
+            if self.priority_mode and unsecured_sos:
+                ref_pos = (self.robot.x, self.robot.y)
+                unsecured_sos.sort(key=lambda s: survivor_priority_key(s, ref_pos))
+                next_sos = unsecured_sos[0]
+                self._start_rescue_for_sos(next_sos)
+            else:
+                self.transition_to(MissionState.SEARCH_PATROL, "Target resolved. Resuming coverage patrol.")
+            return
 
         # Sequential mode (default): scout holds safe standoff until extraction completes
         is_secured = False

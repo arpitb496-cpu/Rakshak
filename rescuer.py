@@ -252,6 +252,20 @@ class RescuerAgent:
                     self.path = [(self.home_x, self.home_y)]
                 self.path_idx = 0
                 return f"RELEASED:{self.name}:{sid}"
+            else:
+                free_pose = self._find_nearest_free_pose(arena, scout_pos, other_rescuers)
+                if free_pose is not None:
+                    self.x, self.y = free_pose
+                self.stuck_timer = 0.0
+                self._next_replan_thresh = 2.0
+                self.replan_count = 0
+                target = (self.home_x, self.home_y) if is_returning else (self.target_pos if self.target_pos else (self.home_x, self.home_y))
+                if planner is not None:
+                    self.path = planner.plan_path((self.x, self.y), target, arena, ignore_rescuer_id=self.id)
+                else:
+                    self.path = [target]
+                self.path_idx = 0
+                return None
 
         elif self.stuck_timer >= self._next_replan_thresh:
             self.replan_count += 1
@@ -349,13 +363,9 @@ class RescuerAgent:
                 # Mark survivor secured based on physical proximity at extraction site
                 target_s = None
                 if arena.survivors:
-                    if self.assigned_survivor_id:
-                        for s in arena.survivors:
-                            if s.id == self.assigned_survivor_id:
-                                target_s = s
-                                break
-                    if target_s is None:
-                        target_s = min(arena.survivors, key=lambda s: math.hypot(s.x - self.x, s.y - self.y))
+                    close_survs = [s for s in arena.survivors if math.hypot(s.x - self.x, s.y - self.y) < 85.0]
+                    if close_survs:
+                        target_s = min(close_survs, key=lambda s: math.hypot(s.x - self.x, s.y - self.y))
                     if target_s is not None:
                         target_s.is_rescued = True
                         target_s.is_secured = True
@@ -417,9 +427,17 @@ class RescuerAgent:
         event = None
 
         # If inbound to target survivor and within extraction radius (<= 55px, or <= 75px if held/stuck)
-        if not is_returning and self.target_pos is not None:
-            dist_target = math.hypot(self.x - self.target_pos[0], self.y - self.target_pos[1])
-            if dist_target <= 55.0 or (self.stuck_timer > 2.0 and dist_target <= 75.0):
+        if not is_returning:
+            dist_target = math.hypot(self.x - self.target_pos[0], self.y - self.target_pos[1]) if self.target_pos is not None else float("inf")
+            dist_surv = float("inf")
+            if getattr(arena, "survivors", []):
+                for s in arena.survivors:
+                    if not s.is_secured and (s.id == self.assigned_survivor_id or math.hypot(s.x - self.x, s.y - self.y) < 85.0):
+                        d = math.hypot(s.x - self.x, s.y - self.y)
+                        if d < dist_surv:
+                            dist_surv = d
+            effective_dist = min(dist_target, dist_surv)
+            if effective_dist <= 55.0 or (self.stuck_timer > 2.0 and effective_dist <= 75.0):
                 self.stuck_timer = 0.0
                 if manual_mode:
                     self.vx = 0.0
@@ -559,10 +577,24 @@ class RescuerAgent:
                     self.stuck_timer += dt
                     return self._handle_stuck(dt, arena, scout_pos, other_rescuers, is_returning, message_bus, current_time, planner, dispatch_manager)
 
-        if math.hypot(cand_x - self.x, cand_y - self.y) < 0.1:
+        # Check net displacement to detect oscillation deadlocks
+        if not hasattr(self, "_pos_history"):
+            self._pos_history = []
+        self._pos_history.append((self.x, self.y))
+        if len(self._pos_history) > 30:
+            self._pos_history.pop(0)
+
+        is_oscillating = False
+        if len(self._pos_history) >= 25:
+            disp = math.hypot(self.x - self._pos_history[0][0], self.y - self._pos_history[0][1])
+            if disp < 8.0:
+                is_oscillating = True
+
+        if math.hypot(cand_x - self.x, cand_y - self.y) < 0.1 or is_oscillating:
             self.stuck_timer += dt
             stuck_event = self._handle_stuck(dt, arena, scout_pos, other_rescuers, is_returning, message_bus, current_time, planner, dispatch_manager)
             if stuck_event:
+                self._pos_history.clear()
                 return stuck_event
         else:
             self.stuck_timer = 0.0
@@ -785,10 +817,10 @@ class DispatchManager:
                 sid = p["survivor_id"]
                 track_id = p.get("track_id")
                 matched_sos = None
-                if sid in self.active_sos:
-                    matched_sos = self.active_sos.pop(sid)
-                elif track_id and track_id in self.active_sos:
+                if track_id and track_id in self.active_sos:
                     matched_sos = self.active_sos.pop(track_id)
+                elif sid in self.active_sos:
+                    matched_sos = self.active_sos.pop(sid)
                 if matched_sos:
                     matched_sos.secured_time = current_time
                     matched_sos.status = "SECURED"
@@ -814,6 +846,8 @@ class DispatchManager:
                     pass
                 if log_callback:
                     log_callback(f"Survivor {sid} secured by Rescuer {p['rescuer_id']}")
+
+        # Note: SOS release is handled explicitly via RELEASE_SOS message bus protocol
 
         # 2. Sort pending SOS requests: CRITICAL > INJURED > STABLE, then nearest-first
         ref_x = sum(r.x for r in rescuers) / len(rescuers) if rescuers else 0.0

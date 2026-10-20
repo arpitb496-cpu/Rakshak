@@ -357,10 +357,10 @@ class VisionTracker:
                 if trk.frames_since_seen > 3:
                     trk.recent_measurements.clear()
                 if trk.frames_since_seen > self.max_lost_frames:
-                    if not trk.is_secured:
+                    if not trk.is_secured and not trk.is_locked:
                         trk.is_locked = False
                 if trk.frames_since_seen > self.max_lost_frames * 3:
-                    if not trk.is_secured:
+                    if not trk.is_secured and not trk.is_locked:
                         del self.survivor_tracks[tid]
 
         # Update active track ID
