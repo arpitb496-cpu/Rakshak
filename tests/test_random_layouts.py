@@ -38,7 +38,7 @@ from astar import AStarPlanner
 from fsm import MissionFSM, MissionState
 
 
-def run_single_layout(seed: int, max_frames: int = 3000, dt: float = 1.0 / 30.0):
+def run_single_layout(seed: int, max_frames: int = 3000, dt: float = 1.0 / 30.0, priority_mode: bool = False):
     """Simulates a single randomized layout and checks safety & performance invariants."""
     arena = DisasterArena(width=800, height=650)
     arena.randomize_layout(seed=seed)
@@ -49,7 +49,7 @@ def run_single_layout(seed: int, max_frames: int = 3000, dt: float = 1.0 / 30.0)
     tracker = VisionTracker(lock_threshold=4)
     apf = APFController()
     astar = AStarPlanner(arena_width=800, arena_height=650)
-    fsm = MissionFSM(arena, robot, camera, detector, tracker, astar, apf)
+    fsm = MissionFSM(arena, robot, camera, detector, tracker, astar, apf, priority_mode=priority_mode)
 
     # Initial sensor scan
     robot.scan_proximity_sensors(arena)
@@ -93,28 +93,69 @@ def run_single_layout(seed: int, max_frames: int = 3000, dt: float = 1.0 / 30.0)
         )
 
         # Check reach condition
-        if fsm.current_state in (MissionState.RESCUE_OPERATION, MissionState.MISSION_COMPLETE):
-            reached = True
-            break
+        all_done = (
+            hasattr(arena, "survivors")
+            and arena.survivors
+            and all(s.is_secured for s in arena.survivors)
+        )
+        if priority_mode:
+            if fsm.current_state == MissionState.MISSION_COMPLETE or all_done:
+                reached = True
+                break
+        else:
+            if fsm.current_state in (MissionState.RESCUE_OPERATION, MissionState.MISSION_COMPLETE):
+                reached = True
+                break
 
     # Accuracy at lock time and rescue time
     lock_err = tracker.error_at_lock
-    if reached and tracker.error_at_rescue is None:
+    if reached and tracker.error_at_rescue is None and not priority_mode:
         tracker.record_rescue_error((arena.survivor.x, arena.survivor.y))
     rescue_err = tracker.error_at_rescue
+
+    rescue_errors_dict = dict(getattr(tracker, "track_rescue_errors", {}))
+    if hasattr(arena, "survivors"):
+        for s in arena.survivors:
+            if s.is_secured and s.id in tracker.survivor_tracks and s.id not in rescue_errors_dict:
+                trk = tracker.survivor_tracks[s.id]
+                rescue_errors_dict[s.id] = float(math.hypot(trk.est_world_x - s.x, trk.est_world_y - s.y))
+    if tracker.error_at_rescue is not None and not rescue_errors_dict:
+        rescue_errors_dict["scout"] = tracker.error_at_rescue
+
+    if priority_mode and rescue_err is None and rescue_errors_dict:
+        rescue_err = statistics.median(rescue_errors_dict.values())
 
     triage_records = dict(getattr(tracker, "frozen_triage_records", {}))
     for tid, trk in tracker.survivor_tracks.items():
         if trk.triage_frozen and trk.true_triage:
             triage_records[tid] = (trk.true_triage, trk.triage_level)
 
+    lock_errors_dict = dict(tracker.track_lock_errors)
+    for tid, trk in tracker.survivor_tracks.items():
+        if trk.error_at_lock is not None and tid not in lock_errors_dict:
+            lock_errors_dict[tid] = trk.error_at_lock
+
+    all_done = (
+        hasattr(arena, "survivors")
+        and arena.survivors
+        and all(s.is_secured for s in arena.survivors)
+    )
+    survivors_secured = sum(1 for s in arena.survivors if s.is_secured) if hasattr(arena, "survivors") and arena.survivors else (1 if reached else 0)
+    total_survivors = len(arena.survivors) if hasattr(arena, "survivors") and arena.survivors else 1
+
     return {
         "seed": seed,
-        "reached": reached,
+        "reached": (all_done or fsm.current_state == MissionState.MISSION_COMPLETE) if priority_mode else reached,
+        "all_secured": (all_done or fsm.current_state == MissionState.MISSION_COMPLETE),
+        "survivors_secured": survivors_secured,
+        "total_survivors": total_survivors,
+        "mission_time": fsm.mission_time,
         "collisions": collisions,
         "longest_idle": longest_idle,
         "lock_err": lock_err,
+        "lock_errors": lock_errors_dict,
         "rescue_err": rescue_err,
+        "rescue_errors": rescue_errors_dict,
         "survivor_pos": (arena.survivor.x, arena.survivor.y),
         "triage_records": triage_records,
     }
@@ -128,6 +169,7 @@ def execute_benchmark(
     max_frames: int = 3000,
     seed: Optional[int] = None,
     base_seed: Optional[int] = None,
+    priority_mode: bool = False,
 ):
     """
     Executes headless benchmark across multiple randomized disaster layouts.
@@ -140,9 +182,11 @@ def execute_benchmark(
     max_idle_overall = 0.0
     lock_errors = []
     rescue_errors = []
+    mission_times = []
 
+    mode_label = "PRIORITY SWEEP MODE" if priority_mode else "HEADLESS"
     print("\n" + "=" * 78)
-    print(f"  RAKSHAK: {num_layouts} RANDOM LAYOUTS BENCHMARK EVALUATION (HEADLESS)")
+    print(f"  RAKSHAK: {num_layouts} RANDOM LAYOUTS BENCHMARK EVALUATION ({mode_label})")
     print("=" * 78)
 
     from sound import get_sound_manager
@@ -152,42 +196,82 @@ def execute_benchmark(
     try:
         for i in range(num_layouts):
             layout_seed = active_base_seed + i
-            res = run_single_layout(seed=layout_seed, max_frames=max_frames)
+            res = run_single_layout(seed=layout_seed, max_frames=max_frames, priority_mode=priority_mode)
             results.append(res)
             total_collisions += res["collisions"]
+            mission_times.append(res["mission_time"])
             if res["longest_idle"] > max_idle_overall:
                 max_idle_overall = res["longest_idle"]
 
-            if res["lock_err"] is not None:
+            if "lock_errors" in res and res["lock_errors"]:
+                for err in res["lock_errors"].values():
+                    lock_errors.append(err)
+            elif res["lock_err"] is not None:
                 lock_errors.append(res["lock_err"])
-            if res["rescue_err"] is not None:
+
+            if priority_mode and "rescue_errors" in res and res["rescue_errors"]:
+                for err in res["rescue_errors"].values():
+                    rescue_errors.append(err)
+            elif res["rescue_err"] is not None:
                 rescue_errors.append(res["rescue_err"])
 
-            status = "REACHED" if res["reached"] else "TIMEOUT"
-            err_str = f"{res['lock_err']:.2f}px" if res["lock_err"] is not None else "N/A"
+            if res["lock_err"] is not None:
+                err_str = f"{res['lock_err']:.2f}px"
+            elif "lock_errors" in res and res["lock_errors"]:
+                err_str = f"{statistics.median(res['lock_errors'].values()):.2f}px"
+            else:
+                err_str = "N/A"
             rescue_str = f"{res['rescue_err']:.2f}px" if res["rescue_err"] is not None else "N/A"
-            print(
-                f"Layout {i:2d}: {status:7s} | "
-                f"Collisions: {res['collisions']} | "
-                f"Max Idle: {res['longest_idle']:.2f}s | "
-                f"Lock Err: {err_str:>8s} | "
-                f"Rescue Err: {rescue_str:>8s}"
-            )
+            if priority_mode:
+                status = "ALL_SECURED" if res.get("all_secured", False) else "PARTIAL"
+                print(
+                    f"Layout {i:2d}: {status:11s} | "
+                    f"Secured: {res['survivors_secured']}/{res['total_survivors']} | "
+                    f"Time: {res['mission_time']:5.1f}s | "
+                    f"Collisions: {res['collisions']} | "
+                    f"Lock Err: {err_str:>8s} | "
+                    f"Rescue Err: {rescue_str:>8s}"
+                )
+            else:
+                status = "REACHED" if res["reached"] else "TIMEOUT"
+                print(
+                    f"Layout {i:2d}: {status:7s} | "
+                    f"Collisions: {res['collisions']} | "
+                    f"Max Idle: {res['longest_idle']:.2f}s | "
+                    f"Lock Err: {err_str:>8s} | "
+                    f"Rescue Err: {rescue_str:>8s}"
+                )
     finally:
         sm.suppress_logs = old_suppress
 
     # Aggregates
     reached_count = sum(1 for r in results if r["reached"])
     reach_rate = reached_count / float(num_layouts)
+    all_secured_count = sum(1 for r in results if r.get("all_secured", False))
+    all_secured_rate = all_secured_count / float(num_layouts)
+    median_mission_time = statistics.median(mission_times) if mission_times else 0.0
     median_lock_error = statistics.median(lock_errors) if lock_errors else 999.0
+    mean_lock_error = statistics.mean(lock_errors) if lock_errors else 999.0
+    max_lock_error = max(lock_errors) if lock_errors else 999.0
     median_rescue_error = statistics.median(rescue_errors) if rescue_errors else 999.0
 
     print("-" * 78)
-    print(f"Reach rate:                {reached_count}/{num_layouts} ({reach_rate * 100:.1f}%)")
-    print(f"Collision count:           {total_collisions}")
-    print(f"Longest idle time:         {max_idle_overall:.2f}s")
-    print(f"Median localization error: {median_lock_error:.2f} px (at lock time)")
-    print(f"Median rescue error:       {median_rescue_error:.2f} px (at rescue standoff)")
+    if priority_mode:
+        print(f"All-survivors-secured rate: {all_secured_count}/{num_layouts} ({all_secured_rate * 100:.1f}%)")
+        print(f"Collision count:           {total_collisions}")
+        print(f"Median mission time:       {median_mission_time:.1f} s")
+        print(f"Median localization error: {median_lock_error:.2f} px (at lock time)")
+        print(f"Mean localization error:   {mean_lock_error:.2f} px (at lock time)")
+        print(f"Max localization error:    {max_lock_error:.2f} px (at lock time)")
+        print(f"Median rescue error:       {median_rescue_error:.2f} px (at rescue standoff)")
+    else:
+        print(f"Reach rate:                {reached_count}/{num_layouts} ({reach_rate * 100:.1f}%)")
+        print(f"Collision count:           {total_collisions}")
+        print(f"Longest idle time:         {max_idle_overall:.2f}s")
+        print(f"Median localization error: {median_lock_error:.2f} px (at lock time)")
+        print(f"Mean localization error:   {mean_lock_error:.2f} px (at lock time)")
+        print(f"Max localization error:    {max_lock_error:.2f} px (at lock time)")
+        print(f"Median rescue error:       {median_rescue_error:.2f} px (at rescue standoff)")
 
     # Aggregate triage metrics
     all_triage_records = []
@@ -220,23 +304,29 @@ def execute_benchmark(
     # a) Assert robot center never overlaps any obstacle, hazard, rescuer, or wall
     assert total_collisions == 0, f"Expected 0 collisions across {num_layouts} layouts, got {total_collisions}"
 
-    # b) Assert survivor is reached in at least 18 of 20 layouts
-    min_required_reach = 18 if num_layouts == 20 else int(math.ceil(num_layouts * 0.9))
-    assert reached_count >= min_required_reach, f"Expected >= {min_required_reach} reached, got {reached_count}/{num_layouts}"
+    if not priority_mode:
+        # b) Assert survivor is reached in at least 18 of 20 layouts
+        min_required_reach = 18 if num_layouts == 20 else int(math.ceil(num_layouts * 0.9))
+        assert reached_count >= min_required_reach, f"Expected >= {min_required_reach} reached, got {reached_count}/{num_layouts}"
 
-    # c) Assert robot is never stationary for more than 3 seconds outside MISSION_COMPLETE
-    assert max_idle_overall < 3.0, f"Expected longest idle < 3.0s, got {max_idle_overall:.2f}s"
+        # c) Assert robot is never stationary for more than 3 seconds outside MISSION_COMPLETE
+        assert max_idle_overall < 3.0, f"Expected longest idle < 3.0s, got {max_idle_overall:.2f}s"
 
-    # d) Assert median localization error at lock time is under 30 px
-    assert median_lock_error < 30.0, f"Expected median lock error < 30.0 px, got {median_lock_error:.2f} px"
+        # d) Assert median localization error at lock time is under 30 px
+        assert median_lock_error < 30.0, f"Expected median lock error < 30.0 px, got {median_lock_error:.2f} px"
 
     return {
-        "reached_count": reached_count,
+        "reached_count": all_secured_count if priority_mode else reached_count,
+        "all_secured_count": all_secured_count,
         "total_layouts": num_layouts,
-        "reach_rate": reach_rate,
+        "reach_rate": all_secured_rate if priority_mode else reach_rate,
+        "all_secured_rate": all_secured_rate,
         "collision_count": total_collisions,
+        "median_mission_time": median_mission_time,
         "longest_idle": max_idle_overall,
         "median_lock_error": median_lock_error,
+        "mean_lock_error": mean_lock_error,
+        "max_lock_error": max_lock_error,
         "median_rescue_error": median_rescue_error,
         "triage_accuracy": triage_acc_pct,
         "triage_total": total_triage,
@@ -275,3 +365,14 @@ def test_benchmark_triage_metrics_and_confusion_matrix(capsys):
 
     captured = capsys.readouterr().out
     assert "[AUDIO]" not in captured
+
+
+def test_priority_mode_benchmark():
+    """
+    Verifies priority sweep mode benchmark execution across layouts.
+    """
+    summary = execute_benchmark(num_layouts=2, max_frames=1200, priority_mode=True)
+    assert "all_secured_rate" in summary
+    assert "median_mission_time" in summary
+    assert summary["collision_count"] == 0
+    assert 0.0 <= summary["triage_accuracy"] <= 100.0

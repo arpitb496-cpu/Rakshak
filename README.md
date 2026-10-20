@@ -158,10 +158,14 @@ Evaluated headlessly via `.venv/bin/python run.py --benchmark`:
 | **Reach rate** | **100.0%** (20/20 layouts reached) | **100.0%** (100/100 layouts reached) |
 | **Collision count** | **0** (zero collisions) | **0** (zero collisions) |
 | **Longest idle time** | **0.20 s** | **0.20 s** |
-| **Median localization error** | **8.80 px** (at lock time) | **5.62 px** (at lock time) |
+| **Median localization error** | **7.12 px** (at lock time) | **6.49 px** (at lock time) |
+| **Mean localization error** | **11.71 px** (at lock time) | **9.26 px** (at lock time) |
+| **Max localization error** | **56.57 px** (at lock time) | **53.93 px** (at lock time) |
 | **Median rescue error** | **2.25 px** (at rescue standoff) | **2.47 px** (at rescue standoff) |
 | **Triage accuracy** | **100.0%** (25/25 targets) | **96.5%** (109/113 targets) |
-| **Test suite** | **96 tests passing** in pytest | **96 tests passing** in pytest |
+| **Test suite** | **97 tests passing** in pytest | **97 tests passing** in pytest |
+
+> **Note on Lock vs. Rescue Localization Error**: Lock-time error is large because early locks happen at long range (up to 340 px) where pixel discretization and triangulation angles are coarsest; as the scout closes in, continuous sensor filtering refines the estimate down to ~1–2 px by the time the survivor is reached and secured.
 
 #### Benchmark Confusion Matrices (Rows = Ground Truth, Columns = Perceived)
 
@@ -190,6 +194,48 @@ Evaluated headlessly via `.venv/bin/python run.py --benchmark`:
 > .venv/bin/python run.py --benchmark --layouts 100 --seed 1000
 > ```
 
+### Priority sweep mode (demo configuration)
+
+Evaluated headlessly via `.venv/bin/python run.py --benchmark --priority`:
+
+| Metric | Dev Results (20 layouts, seeds 0–19) | Held-Out Results (100 layouts, seeds 1000–1099) |
+|---|---|---|
+| **All-survivors-secured rate** | **20.0%** (4/20 layouts all secured) | **32.0%** (32/100 layouts all secured) |
+| **Collision count** | **0** (zero collisions) | **0** (zero collisions) |
+| **Mission time (median)** | **100.0 s** | **100.0 s** |
+| **Median localization error** | **11.17 px** (at lock time) | **12.23 px** (at lock time) |
+| **Mean localization error** | **20.19 px** (at lock time) | **36.51 px** (at lock time) |
+| **Max localization error** | **464.68 px** (at lock time) | **609.57 px** (at lock time) |
+| **Median rescue error** | **4.50 px** (at rescue standoff) | **2.69 px** (at rescue standoff) |
+| **Triage accuracy** | **91.2%** (73/80 targets) | **91.9%** (330/359 targets) |
+
+#### Priority Sweep Confusion Matrices (Rows = Ground Truth, Columns = Perceived)
+
+**Dev Results (20 layouts, seeds 0–19):**
+```
+              CRITICAL   INJURED    STABLE
+  CRITICAL          34         2         0
+  INJURED            4        21         0
+  STABLE             1         0        18
+```
+
+**Held-Out Results (100 layouts, seeds 1000–1099):**
+```
+              CRITICAL   INJURED    STABLE
+  CRITICAL         152         1         0
+  INJURED           13        97         1
+  STABLE            11         3        81
+```
+
+> Reproduce priority sweep benchmark commands at any time:
+> ```bash
+> # Dev priority sweep benchmark (20 layouts):
+> .venv/bin/python run.py --benchmark --priority
+>
+> # Held-out priority sweep benchmark (100 layouts, seeds 1000-1099):
+> .venv/bin/python run.py --benchmark --priority --layouts 100 --seed 1000
+> ```
+
 ### Perception & Accuracy Engineering
 
 1. **Range sanity gating:** Detections with estimated distance $Z > 340$ px or $Z < 10$ px are automatically discarded.
@@ -203,6 +249,8 @@ Evaluated headlessly via `.venv/bin/python run.py --benchmark`:
 
 | Limitation | Technical Detail | Future Scope |
 |---|---|---|
+| **Lock-time error at long range** | Early locks at long range (>200 px) can exhibit 40–55 px error; the estimate converges to ~1–2 px as the survivor is approached and secured. | Range-adaptive lock gating, stereo/depth cues. |
+| **Limited survivor placement variety** | Survivors are placed on a limited set of candidate spots, so benchmark layouts are seeded but share topological features. | Continuous random Poisson-disk placement. |
 | **INJURED vs STABLE long-range confusion** | At distance > 220 px, badge size shrinks to $<4$ px, risking color confusion with torso reflective striping ($H=23$). Resolved via vertical ROI tightening ($0.45h$–$0.85h$) and tuning yellow band to $H \in [26, 38]$. | Implement multi-scale super-resolution or zoom ROI on candidate survivor boxes. |
 | **2-D synthetic camera** | Camera rasterizes 2.5-D column projections in 160×90 rather than true 3-D mesh raytracing or RGB-D sensors. | Port sensor stack to ROS 2 Humble + Gazebo simulation with simulated RealSense D435. |
 | **Simulation-only environment** | Physics, wheel slip, and sensor latency are ideal 2-D kinematic models. | Deploy on physical differential-drive rover platform with STM32 motor controller. |

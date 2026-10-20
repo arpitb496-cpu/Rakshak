@@ -352,43 +352,21 @@ class VisionTracker:
             active = self.survivor_track
             self.active_track_id = active.target_id if active else None
 
-        # Localization error calculation for telemetry and benchmark
-        def _get_gt_xy(trk_target):
-            if ground_truth_survivor is None:
-                return None
-            cands = ground_truth_survivor if isinstance(ground_truth_survivor, list) else [ground_truth_survivor]
-            if not cands:
-                return None
-            def _pt(p):
-                return (p.x, p.y) if hasattr(p, "x") else (p[0], p[1])
-            for c in cands:
-                if getattr(c, "id", None) == trk_target.target_id:
-                    return _pt(c)
-            best_gt = min(
-                cands,
-                key=lambda p: math.hypot(trk_target.est_world_x - _pt(p)[0], trk_target.est_world_y - _pt(p)[1]),
-            )
-            return _pt(best_gt)
+        if ground_truth_survivor is not None:
+            self._last_ground_truth = ground_truth_survivor
 
-        # Record error_at_lock for each track when it locks
+        # Record error_at_lock for each track when it locks using shared function
         for trk in self.survivor_tracks.values():
             if trk.is_locked and trk.error_at_lock is None:
-                gt_pt = _get_gt_xy(trk)
-                if gt_pt is not None:
-                    trk.error_at_lock = math.hypot(trk.est_world_x - gt_pt[0], trk.est_world_y - gt_pt[1])
-                    self.track_lock_errors[trk.target_id] = trk.error_at_lock
+                self.record_lock_error(trk, ground_truth_survivor)
 
         st = self.survivor_track
         if ground_truth_survivor is not None and st is not None:
-            gt_pt = _get_gt_xy(st)
-            if gt_pt is not None:
-                gt_x, gt_y = gt_pt
-                self.last_matched_gt = (gt_x, gt_y)
-                self.last_localization_error = math.hypot(st.est_world_x - gt_x, st.est_world_y - gt_y)
-                if st.is_locked and st.error_at_lock is None:
-                    st.error_at_lock = self.last_localization_error
-                    self.track_lock_errors[st.target_id] = self.last_localization_error
+            err = self.compute_lock_error(st, ground_truth_survivor)
+            if err is not None:
+                self.last_localization_error = err
                 if st.is_locked:
+                    self.record_lock_error(st, ground_truth_survivor)
                     self.has_locked = True
 
         # Update Rescuer tracks
@@ -411,6 +389,44 @@ class VisionTracker:
                     is_locked=True,
                 )
             )
+
+    def compute_lock_error(self, track: TrackedTarget, ground_truth=None) -> Optional[float]:
+        """
+        Computes localization error for a track measured against that survivor's own ground truth.
+        Prioritizes exact survivor ID match; falls back to nearest spatial candidate.
+        """
+        gt_source = ground_truth if ground_truth is not None else getattr(self, "_last_ground_truth", None)
+        if gt_source is None:
+            return None
+        cands = gt_source if isinstance(gt_source, list) else [gt_source]
+        if not cands:
+            return None
+        def _pt(p):
+            return (p.x, p.y) if hasattr(p, "x") else (p[0], p[1])
+        for c in cands:
+            if getattr(c, "id", None) == track.target_id:
+                gt_x, gt_y = _pt(c)
+                return float(math.hypot(track.est_world_x - gt_x, track.est_world_y - gt_y))
+        best_gt = min(
+            cands,
+            key=lambda p: math.hypot(track.est_world_x - _pt(p)[0], track.est_world_y - _pt(p)[1]),
+        )
+        gt_x, gt_y = _pt(best_gt)
+        return float(math.hypot(track.est_world_x - gt_x, track.est_world_y - gt_y))
+
+    def record_lock_error(self, track: TrackedTarget, ground_truth=None) -> Optional[float]:
+        """
+        Shared function: measures and records error_at_lock at the moment a track first becomes locked,
+        against that survivor's own ground truth.
+        """
+        if track.error_at_lock is not None:
+            return track.error_at_lock
+        err = self.compute_lock_error(track, ground_truth)
+        if err is not None:
+            track.error_at_lock = err
+            self.track_lock_errors[track.target_id] = err
+            self._last_error_at_lock = err
+        return err
 
     def is_survivor_locked(self) -> bool:
         """Returns True if survivor coordinates are verified and locked."""

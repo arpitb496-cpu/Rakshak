@@ -248,6 +248,7 @@ class MissionFSM:
             for trk in self.tracker.survivor_tracks.values():
                 if trk.target_id not in known_ids and not trk.is_secured:
                     trk.is_locked = True
+                    self.tracker.record_lock_error(trk, getattr(self.arena, "survivors", [self.arena.survivor]))
                     try:
                         from sound import get_sound_manager
                         sm = get_sound_manager()
@@ -454,7 +455,7 @@ class MissionFSM:
                     "loc_error": None,
                 }
             if tr.is_locked and self.survivor_timeline[tr.target_id]["loc_error"] is None:
-                err = getattr(tr, "error_at_lock", None) or self.tracker.track_lock_errors.get(tr.target_id) or self.tracker.last_localization_error
+                err = self.tracker.record_lock_error(tr, gt_survivors)
                 if err is not None:
                     self.survivor_timeline[tr.target_id]["loc_error"] = err
 
@@ -567,6 +568,7 @@ class MissionFSM:
                 if trk.target_id not in self._sweep_queued_ids:
                     self._sweep_queued_ids.add(trk.target_id)
                     trk.is_locked = True
+                    self.tracker.record_lock_error(trk, getattr(self.arena, "survivors", [self.arena.survivor]))
                     try:
                         from sound import get_sound_manager
                         sm = get_sound_manager()

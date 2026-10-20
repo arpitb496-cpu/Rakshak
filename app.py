@@ -1321,6 +1321,8 @@ class RakshakApp:
             lock_err = getattr(st, "error_at_lock", None)
             if lock_err is None and st is not None:
                 lock_err = self.tracker.track_lock_errors.get(st.target_id)
+            if lock_err is None and st is not None and st.is_locked:
+                lock_err = self.tracker.record_lock_error(st, getattr(self.arena, "survivors", [self.arena.survivor]))
             if lock_err is None:
                 lock_err = getattr(self.tracker, "error_at_lock", None)
             lock_err_str = f"{lock_err:.1f} px" if lock_err is not None else "--"
