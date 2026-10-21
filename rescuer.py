@@ -718,7 +718,8 @@ class DispatchManager:
                 return False
 
         # Range-adaptive spatial deduplication: skip if SOS for same physical survivor is already queued/active
-        gate = min(60.0, 45.0 + 0.1 * detection_range)
+        # FIX 1: dedupe gate < 40 px so survivors ~50 px apart each get their own SOS
+        gate = min(38.0, 25.0 + 0.05 * detection_range)
         for s in self.active_sos.values():
             if math.hypot(est_x - s.est_x, est_y - s.est_y) < gate:
                 return False

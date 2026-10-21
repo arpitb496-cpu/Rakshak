@@ -407,6 +407,19 @@ class VisionTracker:
                 )
             )
 
+    def can_merge_tracks(self, track_a: TrackedTarget, track_b: TrackedTarget) -> bool:
+        """Determines if two tracks can be merged under the range-adaptive gate.
+        Never merges two tracks if both have >= 5 measurements and their estimates are >= 45 px apart."""
+        dist = math.hypot(track_a.est_world_x - track_b.est_world_x, track_a.est_world_y - track_b.est_world_y)
+        if (
+            len(track_a.recent_measurements) >= 5
+            and len(track_b.recent_measurements) >= 5
+            and dist >= 45.0
+        ):
+            return False
+        assoc_gate = min(115.0, 85.0 + 0.4 * max(track_a.est_range, track_b.est_range))
+        return dist < assoc_gate
+
     def compute_lock_error(self, track: TrackedTarget, ground_truth=None, gate_threshold: float = 85.0) -> Optional[float]:
         """
         Computes localization error for a track measured against that survivor's own ground truth.
