@@ -360,12 +360,25 @@ class RescuerAgent:
             self.extraction_timer += dt
 
             if self.extraction_timer >= self.extraction_duration:
-                # Mark survivor secured based on physical proximity at extraction site
+                # FIX 1: Only the assigned survivor may be marked secured by this rescuer
                 target_s = None
-                if arena.survivors:
-                    close_survs = [s for s in arena.survivors if math.hypot(s.x - self.x, s.y - self.y) < 85.0]
-                    if close_survs:
-                        target_s = min(close_survs, key=lambda s: math.hypot(s.x - self.x, s.y - self.y))
+                survs = getattr(arena, "survivors", None)
+                if survs:
+                    for s in survs:
+                        if s.id == self.assigned_survivor_id:
+                            if self.target_pos is None or math.hypot(s.x - self.target_pos[0], s.y - self.target_pos[1]) < 85.0:
+                                target_s = s
+                                break
+                    if target_s is None and self.target_pos is not None:
+                        close_to_target = [
+                            s for s in survs
+                            if not s.is_secured and math.hypot(s.x - self.target_pos[0], s.y - self.target_pos[1]) < 85.0
+                        ]
+                        if close_to_target:
+                            target_s = min(
+                                close_to_target,
+                                key=lambda s: math.hypot(s.x - self.target_pos[0], s.y - self.target_pos[1]),
+                            )
                     if target_s is not None:
                         target_s.is_rescued = True
                         target_s.is_secured = True
@@ -373,7 +386,12 @@ class RescuerAgent:
                     else:
                         actual_id = self.assigned_survivor_id
                 else:
-                    actual_id = self.assigned_survivor_id
+                    if hasattr(arena, "survivor") and arena.survivor is not None:
+                        arena.survivor.is_rescued = True
+                        arena.survivor.is_secured = True
+                        actual_id = getattr(arena.survivor, "id", self.assigned_survivor_id)
+                    else:
+                        actual_id = self.assigned_survivor_id
 
                 self.survivors_rescued += 1
                 event = f"SECURED:{self.name}:{actual_id}"
@@ -427,16 +445,35 @@ class RescuerAgent:
         event = None
 
         # If inbound to target survivor and within extraction radius (<= 55px, or <= 75px if held/stuck)
+        # FIX 1: Arrival must be judged ONLY against its OWN assigned survivor target, never against any other survivor
         if not is_returning:
             dist_target = math.hypot(self.x - self.target_pos[0], self.y - self.target_pos[1]) if self.target_pos is not None else float("inf")
-            dist_surv = float("inf")
-            if getattr(arena, "survivors", []):
-                for s in arena.survivors:
-                    if not s.is_secured and (s.id == self.assigned_survivor_id or math.hypot(s.x - self.x, s.y - self.y) < 85.0):
-                        d = math.hypot(s.x - self.x, s.y - self.y)
-                        if d < dist_surv:
-                            dist_surv = d
-            effective_dist = min(dist_target, dist_surv)
+            dist_assigned = float("inf")
+            survs = getattr(arena, "survivors", None)
+            if survs:
+                assigned_s = None
+                for s in survs:
+                    if not s.is_secured and s.id == self.assigned_survivor_id:
+                        if self.target_pos is None or math.hypot(s.x - self.target_pos[0], s.y - self.target_pos[1]) < 85.0:
+                            assigned_s = s
+                            break
+                if assigned_s is None and self.target_pos is not None:
+                    close_to_target = [
+                        s for s in survs
+                        if not s.is_secured and math.hypot(s.x - self.target_pos[0], s.y - self.target_pos[1]) < 85.0
+                    ]
+                    if close_to_target:
+                        assigned_s = min(
+                            close_to_target,
+                            key=lambda s: math.hypot(s.x - self.target_pos[0], s.y - self.target_pos[1]),
+                        )
+                if assigned_s is not None:
+                    dist_assigned = math.hypot(self.x - assigned_s.x, self.y - assigned_s.y)
+            elif hasattr(arena, "survivor") and arena.survivor is not None:
+                if not getattr(arena.survivor, "is_secured", False):
+                    dist_assigned = math.hypot(self.x - arena.survivor.x, self.y - arena.survivor.y)
+
+            effective_dist = min(dist_target, dist_assigned)
             if effective_dist <= 55.0 or (self.stuck_timer > 2.0 and effective_dist <= 75.0):
                 self.stuck_timer = 0.0
                 if manual_mode:
