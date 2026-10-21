@@ -474,7 +474,8 @@ class RescuerAgent:
                     dist_assigned = math.hypot(self.x - arena.survivor.x, self.y - arena.survivor.y)
 
             effective_dist = min(dist_target, dist_assigned)
-            if effective_dist <= 55.0 or (self.stuck_timer > 2.0 and effective_dist <= 75.0):
+            # FIX 2: Allow arrival within physical standoff margin (<= 85px) when held/stuck
+            if effective_dist <= 55.0 or (self.stuck_timer > 2.0 and effective_dist <= 85.0):
                 self.stuck_timer = 0.0
                 if manual_mode:
                     self.vx = 0.0
@@ -698,8 +699,13 @@ class DispatchManager:
             sos.status = "PENDING"
             sos.assigned_rescuer_id = None
             sos.dispatch_time = None
+            # FIX 2: Track retries; append to back so impossible targets do not starve fleet
+            sos.release_count = getattr(sos, "release_count", 0) + 1
             if not any(s.survivor_id == survivor_id for s in self.sos_queue):
-                self.sos_queue.insert(0, sos)
+                if sos.release_count <= 3:
+                    self.sos_queue.append(sos)
+                else:
+                    self.completed_sos[survivor_id] = sos
 
     def submit_sos(
         self,

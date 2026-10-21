@@ -614,9 +614,13 @@ class MissionFSM:
         st = self.tracker.survivor_track
         detected_tracks = []
         if st is not None:
-            detected_tracks.append(st)
+            if 0.0 <= st.est_world_x <= self.arena.width and 0.0 <= st.est_world_y <= self.arena.height:
+                detected_tracks.append(st)
         for trk in self.tracker.survivor_tracks.values():
             if trk not in detected_tracks and not trk.is_secured:
+                # FIX 2: Ignore tracks with coordinates outside arena boundaries
+                if not (0.0 <= trk.est_world_x <= self.arena.width and 0.0 <= trk.est_world_y <= self.arena.height):
+                    continue
                 detected_tracks.append(trk)
 
         if self.priority_mode and not self.sweep_complete:

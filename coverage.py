@@ -47,6 +47,9 @@ class CoverageGrid:
                     self.accessible_mask[r, c] = False
                 elif arena.is_point_colliding(cx, cy, margin=6.0):
                     self.accessible_mask[r, c] = False
+                elif arena.is_inside_hazard(cx, cy, margin=6.0):
+                    # FIX 2: Physically unreachable area inside hazards does not count toward 99% accessible rule
+                    self.accessible_mask[r, c] = False
                 else:
                     self.accessible_mask[r, c] = True
 
