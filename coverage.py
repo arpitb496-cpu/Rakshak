@@ -145,6 +145,21 @@ class CoverageGrid:
                                     best_cell = (c_wx, c_wy)
                         if best_cell:
                             wx, wy = best_cell
+                        else:
+                            # Search outward for nearest free accessible vantage pose
+                            for rad in range(10, 80, 10):
+                                found = False
+                                for step_i in range(16):
+                                    ang = step_i * (2.0 * math.pi / 16.0)
+                                    cx = wx + rad * math.cos(ang)
+                                    cy = wy + rad * math.sin(ang)
+                                    if 20.0 <= cx <= (self.arena_width - 20.0) and 20.0 <= cy <= (self.arena_height - 20.0):
+                                        if not arena.is_point_colliding(cx, cy, margin=14.0) and not arena.is_inside_hazard(cx, cy, margin=14.0):
+                                            wx, wy = cx, cy
+                                            found = True
+                                            break
+                                if found:
+                                    break
                     best_centroid = (wx, wy)
         return best_centroid
 

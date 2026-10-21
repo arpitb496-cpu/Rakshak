@@ -402,13 +402,13 @@ class MissionFSM:
             self.robot.stop()
             return
 
-        # Phase 3 & Fix B: Post-sweep coverage target (>= 95%) or low battery return to base
+        # FIX 2: Post-sweep coverage target (>= 99%) or low battery return to base
         if self.priority_mode and self.sweep_complete and self.current_state not in (MissionState.RETURN_TO_BASE, MissionState.MISSION_COMPLETE):
             scanned_pct = getattr(self.coverage_grid, "percent_scanned", 0.0)
             has_pending = bool(self.dispatch_manager.sos_queue or self.dispatch_manager.active_sos)
-            if not has_pending and (scanned_pct >= 95.0 or self.battery <= 25.0):
-                self.log(f"[COVERAGE] Area scanned {scanned_pct:.1f}% (target >= 95%) or battery {self.battery:.1f}%. Returning to base.")
-                self.transition_to(MissionState.RETURN_TO_BASE, "Coverage >= 95% or low battery.")
+            if not has_pending and (scanned_pct >= 99.0 or self.battery <= 25.0):
+                self.log(f"[COVERAGE] Area scanned {scanned_pct:.1f}% (target >= 99%) or battery {self.battery:.1f}%. Returning to base.")
+                self.transition_to(MissionState.RETURN_TO_BASE, "Coverage >= 99% or low battery.")
                 self.active_path = self.astar.plan_path((self.robot.x, self.robot.y), self.base_station, self.arena)
                 self.current_waypoint_idx = 0
                 self.patrol_path.clear()
@@ -569,8 +569,9 @@ class MissionFSM:
             self.robot.stop()
             if self.priority_mode:
                 has_pending = bool(self.dispatch_manager.sos_queue or self.dispatch_manager.active_sos)
-                if not has_pending:
-                    self.log(f"[BATTERY] Scout safely docked at base station (battery: {self.battery:.1f}%). Mission complete.")
+                scanned_pct = getattr(self.coverage_grid, "percent_scanned", 0.0)
+                if not has_pending and (scanned_pct >= 99.0 or self.battery <= 25.0):
+                    self.log(f"[BATTERY] Scout safely docked at base station (battery: {self.battery:.1f}%, coverage: {scanned_pct:.1f}%). Mission complete.")
                     self.transition_to(MissionState.MISSION_COMPLETE, "Scout safely docked at base station.")
                     return
 
@@ -645,18 +646,19 @@ class MissionFSM:
                         f"[TRIAGE] Sweep discovered & queued {trk.target_id} [{trk.triage_level}] at ({trk.est_world_x:.1f}, {trk.est_world_y:.1f})"
                     )
 
-            # Check if sweep complete: ~90% area scanned, all known survivors detected, or sweep path completed
+            # FIX 2: Check if sweep complete: >= 99% area scanned, all known survivors detected, or low battery (<= 25%)
             scanned_pct = getattr(self.coverage_grid, "percent_scanned", 0.0)
             queued_count = len(self._sweep_queued_ids)
             total_survivors = self.total_survivors
 
             sweep_done = False
-            if scanned_pct >= 89.0:
+            if scanned_pct >= 99.0:
                 sweep_done = True
             elif total_survivors > 0 and queued_count >= total_survivors:
                 sweep_done = True
-            elif self.patrol_cycle_count >= 1:
+            elif self.battery <= 25.0:
                 sweep_done = True
+                self.log(f"[BATTERY] Low battery ({self.battery:.1f}%) during priority sweep. Ending sweep.")
 
             if sweep_done:
                 self.sweep_complete = True
@@ -728,24 +730,25 @@ class MissionFSM:
                     self.robot.stop()
                     return
 
-        # Check if coverage target reached (>= 95%) or battery low post-sweep
-        if self.sweep_complete:
-            scanned_pct = getattr(self.coverage_grid, "percent_scanned", 0.0)
-            has_pending = bool(self.dispatch_manager.sos_queue or self.dispatch_manager.active_sos)
-            if not has_pending and (scanned_pct >= 95.0 or self.battery <= 25.0):
-                self.log(f"[COVERAGE] Area scanned {scanned_pct:.1f}% (target >= 95%) or battery {self.battery:.1f}%. Returning to base.")
-                self.transition_to(MissionState.RETURN_TO_BASE, "Coverage >= 95% or low battery.")
-                self.active_path = self.astar.plan_path((self.robot.x, self.robot.y), self.base_station, self.arena)
-                self.current_waypoint_idx = 0
-                self.patrol_path.clear()
-                return
+        # FIX 2: Check if coverage target reached (>= 99%) or battery low post-sweep
+        if self.sweep_complete or (self.priority_mode and self.patrol_cycle_count >= 1):
+            if self.sweep_complete:
+                scanned_pct = getattr(self.coverage_grid, "percent_scanned", 0.0)
+                has_pending = bool(self.dispatch_manager.sos_queue or self.dispatch_manager.active_sos)
+                if not has_pending and (scanned_pct >= 99.0 or self.battery <= 25.0):
+                    self.log(f"[COVERAGE] Area scanned {scanned_pct:.1f}% (target >= 99%) or battery {self.battery:.1f}%. Returning to base.")
+                    self.transition_to(MissionState.RETURN_TO_BASE, "Coverage >= 99% or low battery.")
+                    self.active_path = self.astar.plan_path((self.robot.x, self.robot.y), self.base_station, self.arena)
+                    self.current_waypoint_idx = 0
+                    self.patrol_path.clear()
+                    return
 
-            # Post-sweep: use coverage.py to head toward largest unscanned regions
+            # Use coverage.py to head toward largest unscanned regions (corners and pockets)
             target_pt = self.coverage_grid.get_largest_unscanned_checkpoint(self.robot.x, self.robot.y, self.arena)
             if target_pt is None:
                 target_pt = self.coverage_grid.get_unseen_frontier_checkpoint(self.robot.x, self.robot.y)
             if target_pt is None:
-                target_pt = self.base_station
+                target_pt = self.base_station if self.sweep_complete else self.patrol_waypoints[self.patrol_idx]
         else:
             target_pt = self.patrol_waypoints[self.patrol_idx]
 
@@ -774,7 +777,7 @@ class MissionFSM:
                     self.patrol_waypoints[self.patrol_idx] = frontier
                 self.waypoint_timer = 0.0
                 self.patrol_path.clear()
-                if self.sweep_complete:
+                if self.sweep_complete or (self.priority_mode and self.patrol_cycle_count >= 1):
                     self.log("[PATROL] 120° sweep complete. Re-evaluating largest unscanned region.")
                 else:
                     frontier = self.coverage_grid.get_unseen_frontier_checkpoint(self.robot.x, self.robot.y)

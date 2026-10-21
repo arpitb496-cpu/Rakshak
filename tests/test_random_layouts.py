@@ -123,6 +123,7 @@ def run_single_layout(seed: int, max_frames: int = 3000, dt: float = 1.0 / 30.0,
         else:
             if fsm.current_state in (MissionState.RESCUE_OPERATION, MissionState.MISSION_COMPLETE):
                 reached = True
+                physically_secured_ids.add(getattr(arena.survivor, "id", "S1"))
                 break
 
     # Accuracy at lock time and rescue time
@@ -162,12 +163,25 @@ def run_single_layout(seed: int, max_frames: int = 3000, dt: float = 1.0 / 30.0,
     total_survivors = len(arena.survivors) if hasattr(arena, "survivors") and arena.survivors else 1
     survs_list = arena.survivors if (hasattr(arena, "survivors") and arena.survivors) else [arena.survivor]
     all_physically_secured = all(s.id in physically_secured_ids for s in survs_list)
+    physically_reached_count = len(physically_secured_ids)
+    all_arena_reached = (physically_reached_count == total_survivors)
+
+    discovered_ids = set()
+    for s in survs_list:
+        if s.id in physically_secured_ids:
+            discovered_ids.add(s.id)
+        elif any(math.hypot(t.est_world_x - s.x, t.est_world_y - s.y) <= 85.0 for t in tracker.survivor_tracks.values()):
+            discovered_ids.add(s.id)
+    undiscovered_count = total_survivors - len(discovered_ids)
 
     return {
         "seed": seed,
         "reached": (all_done or fsm.current_state == MissionState.MISSION_COMPLETE) if priority_mode else reached,
         "all_secured": (all_done or fsm.current_state == MissionState.MISSION_COMPLETE),
         "all_physically_secured": all_physically_secured,
+        "all_arena_reached": all_arena_reached,
+        "physically_reached_survivors": physically_reached_count,
+        "undiscovered_survivors": undiscovered_count,
         "rescues_over_85px": rescues_over_85px,
         "survivors_secured": survivors_secured,
         "total_survivors": total_survivors,
@@ -250,6 +264,7 @@ def execute_benchmark(
                 print(
                     f"Layout {i:2d}: {status:11s} | "
                     f"Secured: {res['survivors_secured']}/{res['total_survivors']} | "
+                    f"Reached: {res.get('physically_reached_survivors', 0)}/{res['total_survivors']} | "
                     f"Time: {res['mission_time']:5.1f}s | "
                     f"Collisions: {res['collisions']} | "
                     f"Lock Err: {err_str:>8s} | "
@@ -274,6 +289,12 @@ def execute_benchmark(
     all_secured_rate = all_secured_count / float(num_layouts)
     all_physically_secured_count = sum(1 for r in results if r.get("all_physically_secured", False))
     all_physically_secured_rate = all_physically_secured_count / float(num_layouts)
+    all_arena_reached_count = sum(1 for r in results if r.get("all_arena_reached", False))
+    all_arena_reached_rate = all_arena_reached_count / float(num_layouts)
+    total_physically_reached = sum(r.get("physically_reached_survivors", 0) for r in results)
+    total_arena_survivors = sum(r.get("total_survivors", 0) for r in results)
+    per_surv_reached_rate = total_physically_reached / float(total_arena_survivors) if total_arena_survivors > 0 else 0.0
+    total_undiscovered = sum(r.get("undiscovered_survivors", 0) for r in results)
     total_rescues_over_85px = sum(r.get("rescues_over_85px", 0) for r in results)
     rescues_over_50px = sum(1 for e in rescue_errors if e > 50.0)
     median_mission_time = statistics.median(mission_times) if mission_times else 0.0
@@ -285,7 +306,10 @@ def execute_benchmark(
 
     print("-" * 78)
     if priority_mode:
-        print(f"All secured (logical):     {all_secured_count}/{num_layouts} ({all_secured_rate * 100:.1f}%)")
+        print(f"Mission-complete rate:     {all_secured_count}/{num_layouts} ({all_secured_rate * 100:.1f}%)")
+        print(f"Per-survivor reached:      {total_physically_reached}/{total_arena_survivors} ({per_surv_reached_rate * 100:.1f}%)")
+        print(f"All arena reached layouts: {all_arena_reached_count}/{num_layouts} ({all_arena_reached_rate * 100:.1f}%)")
+        print(f"Undiscovered survivors:    {total_undiscovered}")
         print(f"All physically secured:    {all_physically_secured_count}/{num_layouts} ({all_physically_secured_rate * 100:.1f}%)")
         print(f"Rescues > 85 px from GT:   {total_rescues_over_85px}")
         print(f"Rescues > 50 px error:     {rescues_over_50px} / {len(rescue_errors)}")
