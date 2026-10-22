@@ -1,235 +1,206 @@
-# Rakshak // Autonomous Search-and-Rescue Robot
-### *"See. Locate. Rescue."*
+# Rakshak // SAR: Autonomous Search-and-Rescue Robot Simulation
 
-**Hackathon:** Hack in Hills '26 &nbsp;|&nbsp; **Problem Statement:** PS 01 — Autonomous Vision-Guided Robot  
-**Demo:** [▶ YouTube Demo (Placeholder)](https://youtu.be/placeholder) &nbsp;|&nbsp; **Screenshots:** [docs/screenshots/](docs/screenshots/)
+**Hack in Hills '26 · Problem Statement 01: Vision-Based Autonomous Robot · Team Bihari_Coders**
 
----
+Rakshak is a 2-D autonomous search-and-rescue (SAR) simulation. A scout robot patrols a disaster arena, finds survivors with a camera and a vision pipeline, triages them (CRITICAL / INJURED / STABLE), and dispatches up to three rescuers in triage-priority order. An operator can take over at any time with a manual mode.
 
-## Problem Statement (PS 01)
+- Demo video: **<ADD YOUTUBE LINK HERE>**
+- Screenshots: `docs/screenshots/01_autonomous.png`, `02_manual.png`, `03_complete.png`
 
-> *"Build an autonomous robot that uses an AI-powered vision system to understand its surroundings,
-> identify relevant objects and people, and navigate autonomously toward a given objective while
-> detecting and avoiding obstacles. Real or simulated environment is allowed."*
+![Autonomous run](docs/screenshots/01_autonomous.png)
 
-Rakshak answers this challenge with a complete 2-D disaster simulation: a scout robot patrols
-rubble-filled terrain, detects survivors through a synthetic camera, triages them by severity, and
-dispatches up to three rescuers in priority order — all without human intervention.
+## Problem
 
-## Screenshots
+After a disaster, the first hours decide who survives, but responders search blind, and the most critical victims are not always found first. Rakshak shows how an AI-vision scout can find victims, judge urgency, and send help in the right order, with safe navigation and zero collisions. It runs in a simulated environment, as allowed by the problem statement.
 
-| Autonomous Mid-Mission | Manual Teleoperation Mode | Mission Complete Report |
-|:---:|:---:|:---:|
-| ![Autonomous Mid-Mission](docs/screenshots/01_autonomous.png) | ![Manual Teleoperation Mode](docs/screenshots/02_manual.png) | ![Mission Complete Report](docs/screenshots/03_complete.png) |
+## Key features
 
----
+- **Vision pipeline:** a synthetic 160x90 camera is rasterised from the arena; HSV segmentation reads the triage badge on each survivor; a multi-frame tracker smooths and locks the estimate.
+- **Honest triage:** the severity label comes only from what the camera perceives (majority vote over the last 8 frames, at least 70% agreement, frozen after lock). Ground truth is used only to measure accuracy.
+- **Navigation:** A* global planning with safety inflation, plus Artificial Potential Field (APF) reactive avoidance with a tangential force to avoid local minima; 8-ray proximity sensors; differential-drive kinematics.
+- **Dynamic hazards:** hazard zones grow over time and trigger re-planning; rubble can shift.
+- **Dispatch:** 3 rescuers (R1-R3) with states STANDBY / EN_ROUTE / EXTRACTING / SECURED, stuck detection, re-planning and SOS release. The assigned rescuer's target is refreshed as the track estimate converges.
+- **Priority mode (default):** the scout completes a ~99% area sweep, queues all survivors, and dispatches in triage order. Switch it off for rescue-as-found.
+- **Manual override:** steer the scout, lock a survivor, issue SOS, dispatch and confirm extraction from the keyboard.
+- **Telemetry HUD:** state, battery, area scanned, camera feed, radar, target telemetry (live error and lock error), rescue team, SOS queue, event log; optional A* / APF / coverage / HSV overlays.
+- **Sound events:** detection, sirens per triage level, dispatch, extraction, mission complete (mute with `U`).
+- **Mission report:** `mission_report.json` and a final map screenshot are written when a mission completes.
+- **Quality:** 97 automated tests (FSM, tracker, detector, dispatch, coverage, hazards, manual mode, triage, seed reproducibility, benchmark metrics).
 
-## Key Features
+## How the vision works
 
-| Feature | Details |
-|---------|---------|
-| **Autonomous FSM** | 6-state mission controller: `SEARCH_PATROL → VERIFY_TARGET → PLAN_ROUTE → NAVIGATE → RESCUE_OPERATION → MISSION_COMPLETE` |
-| **Vision pipeline** | Synthetic 160×90 camera → OpenCV HSV segmentation → contour analysis → range/bearing estimation |
-| **Honest triage** | 8-frame majority-vote (≥60%) on perceived detector labels; ground truth never used for dispatch |
-| **Triage-priority dispatch** | CRITICAL → INJURED → STABLE, with concurrent R1/R2/R3 rescuers |
-| **Priority Mode** | Full 90% area sweep before rescue; queue sorted by triage rank then distance |
-| **A* planning** | Global path on 800×640 occupancy grid with obstacle inflation |
-| **APF avoidance** | Artificial Potential Field with tangential vortex force (no local-minima traps) |
-| **Dynamic hazards** | Zones grow +0.5 px/s; robot replans automatically on expansion |
-| **Camera noise** | Gaussian pixel noise + drifting smoke haze (toggle `N`) |
-| **Fullscreen** | `F`/`F11`; Retina-safe letterbox scaling; mouse coords remapped |
-| **Manual override** | `M` → steer with WASD, `E` lock, `Enter` dispatch, `X` extract |
-| **96 tests** | Full pytest suite covering FSM, tracker, detector, vision, dispatch, coverage, hazard, manual mode, triage, seed reproducibility |
+```
+Arena ──> Synthetic camera (160x90, noise/smoke) ──> HSV detector (triage badge only)
+      ──> Tracker (association gate, EMA smoothing, 8-frame majority vote, lock + freeze)
+      ──> Mission FSM ──> SOS queue ──> Dispatch manager ──> Rescuers (A* + APF)
+```
 
----
+- Detections beyond the camera range (340 px) or closer than 10 px are discarded.
+- A target locks after at least 4 consecutive stable observations (spatial variance at most 20 px). Estimates use exponential smoothing (alpha 0.35) and are frozen once the survivor is secured.
+- Track IDs are never reused, so a secured survivor can never be confused with a new one.
 
 ## Architecture
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                         app.py                             │
-│          RakshakApp  (main loop · render · input)          │
-└──────┬──────────┬─────────────┬──────────────┬────────────┘
-       │          │             │              │
-    fsm.py   rescuer.py     sound.py       arena.py
-  MissionFSM  DispatchMgr   SoundMgr    DisasterArena
-       │          │                          │
-    robot.py   camera.py               astar.py / apf.py
-    Robot     Camera+noise             Path planners
-       │
-  detector.py ──► tracker.py ──► coverage.py
-  Vision pipeline  Smoothing     Area tracking
+                         app.py  (RakshakApp: main loop, rendering, input)
+      ┌───────────┬───────────┬────────────┬───────────┐
+   fsm.py     rescuer.py   sound.py     arena.py     coverage.py
+ MissionFSM  DispatchMgr   SoundMgr   DisasterArena  area tracker
+      │           │                         │
+  robot.py    camera.py  detector.py   astar.py / apf.py
+  Robot       Camera     HSV vision    Planners
+                          tracker.py
+                          Smoothing + lock
 ```
 
-### How Vision Works
+Mission states: `SEARCH_PATROL → VERIFY_TARGET → PLAN_ROUTE → NAVIGATE_TO_SURVIVOR → RESCUE_OPERATION → MISSION_COMPLETE`.
 
-```
-Arena frame (800×640)
-   │
-   ▼ camera.py — rasterise 160×90 first-person buffer every 2 frames
-   │
-   ▼ detector.py — HSV mask (orange: H 7-25) bounded to triage badge area
-                   contour analysis → bbox, range Z, bearing θ
-   │
-   ▼ tracker.py — nearest-estimate data association (gate 85 px)
-                  EMA smoothing (α=0.35)
-                  8-frame majority vote ≥60% → perceived triage_level
-                  Variance-lock gating (N=3 frames, σ≤20 px) → is_locked=True
-                  Label frozen at lock; true_triage stored for metrics only
-   │
-   ▼ fsm.py — SOS issued; dispatch queue sorted by survivor_priority_key()
-              A* plans route; APF smooths execution
-```
+## Install and run
 
----
-
-## Install & Run
+Requirements: Python 3.9+ (developed and tested on macOS, Apple Silicon).
 
 ```bash
-# 1. Clone and enter
-git clone <repo-url>
+git clone https://github.com/arpitb496-cpu/Rakshak.git
 cd Rakshak
-
-# 2. Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# 3. Install dependencies
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-# 4. Run
-python3 app.py                    # default: Priority Mode ON, windowed
-python3 app.py --fullscreen       # start fullscreen
-python3 app.py --no-priority      # rescue-as-found mode
-python3 app.py --seed 42          # reproducible layout
-python3 run.py --benchmark        # headless benchmark (20 layouts)
-python3 make_demo.py              # record 82-second demo.mp4
+python3 app.py          # or ./rakshak.sh
 ```
 
----
+Quick start: the mission starts automatically. Press `M` to take manual control, `R` for a new layout, `SPACE` to pause.
 
-## Key Bindings
+### CLI flags
+
+```bash
+python3 app.py                  # Priority mode, windowed
+python3 app.py --seed 3         # reproducible layout
+python3 app.py --no-priority    # rescue-as-found mode
+python3 app.py --fullscreen     # start fullscreen
+python3 app.py --lite           # reduced trails for slower machines
+
+python3 run.py --benchmark                               # headless benchmark
+python3 run.py --benchmark --priority --max-frames 12000 # full Priority missions
+python3 run.py --benchmark --layouts 100 --seed 1000     # 100 held-out layouts
+python3 make_demo.py --seed 3 --out demo.mp4             # scripted demo recorder
+```
+
+### Key bindings
 
 | Key | Action |
-|-----|--------|
-| `SPACE` | Pause / Resume |
-| `R` | Reset mission (new random layout) |
-| `M` | Toggle Manual / Autonomous |
-| `E` | *(Manual)* Lock nearest survivor + issue SOS |
-| `WASD` / Arrows | *(Manual)* Steer scout |
-| `Enter` | *(Manual)* Dispatch rescuer |
-| `X` | *(Manual)* Confirm extraction |
-| `U` | Mute / Unmute audio |
-| `F` / `F11` | Toggle fullscreen |
-| `Esc` | Exit fullscreen |
-| `P` / `T` | Toggle Priority Mode |
-| `Y` | A* path overlay |
-| `V` | APF vectors overlay |
-| `O` | Coverage grid overlay |
-| `N` | Camera noise + smoke haze |
-| `H` | HSV mask camera feed |
+|---|---|
+| `SPACE` | Pause / resume |
+| `R` | Reset mission (new layout) |
+| `M` | Toggle manual / autonomous |
+| `WASD` / arrows | (Manual) steer the scout |
+| `E` | (Manual) lock nearest survivor and issue SOS |
+| `Enter` | (Manual) dispatch nearest available rescuer |
+| `X` | (Manual) confirm extraction |
+| `P` / `T` | Toggle Priority mode |
+| `U` | Mute / unmute |
+| `F` / `F11`, `Esc` | Fullscreen on / off |
+| `Y` / `V` / `O` | A* path / APF vectors / coverage grid overlays |
+| `N` / `H` / `C` | Camera noise and smoke / HSV mask feed / camera frustum |
 | `F1` | FPS counter |
 
----
+## Benchmark results
 
-## CLI Flags
+All numbers were produced headlessly by `run.py` on the final commit (97 pytest tests passing). Parameters were tuned on the **dev layouts** (seeds 0-19); the **held-out layouts** (seeds 1000-1099) were used for evaluation. Layouts are seeded and random, but survivors are placed on a limited set of candidate spots, so layouts are not fully independent.
 
-| Flag | Description |
-|------|-------------|
-| `--fullscreen` | Start in fullscreen |
-| `--no-priority` | Rescue-as-found mode (no sweep) |
-| `--seed N` | Fixed random seed for reproducible layout |
-| `--lite` | Reduced rendering for low-spec hardware |
-| `--benchmark` | Headless 20-layout benchmark |
-| `--layouts N` | Number of benchmark layouts (default 20) |
-| `--max-frames N` | Max frames per benchmark layout (default 3000) |
-| `--demo` | Record 3-layout demo.mp4 |
+### Mode 1: Rescue-as-found (`--benchmark`)
 
----
+The scout locks a survivor from close range (~150 px) and a rescuer is dispatched to the first survivor found.
 
-## Results
-
-### Benchmark Comparison: Development vs. Held-Out Evaluation
-
-Evaluated headlessly via `.venv/bin/python run.py --benchmark`:
-
-| Metric | Dev Results (20 layouts, seeds 0–19) | Held-Out Results (100 layouts, seeds 1000–1099) |
+| Metric | Dev (20 layouts) | Held-out (100 layouts) |
 |---|---|---|
-| **Reach rate** | **100.0%** (20/20 layouts reached) | **100.0%** (100/100 layouts reached) |
-| **Collision count** | **0** (zero collisions) | **0** (zero collisions) |
-| **Longest idle time** | **0.20 s** | **0.20 s** |
-| **Median localization error** | **7.12 px** (at lock time) | **6.49 px** (at lock time) |
-| **Mean localization error** | **11.71 px** (at lock time) | **9.26 px** (at lock time) |
-| **Max localization error** | **56.57 px** (at lock time) | **53.93 px** (at lock time) |
-| **Median rescue error** | **2.25 px** (at rescue standoff) | **2.47 px** (at rescue standoff) |
-| **Triage accuracy** | **100.0%** (25/25 targets) | **96.5%** (109/113 targets) |
-| **Test suite** | **97 tests passing** in pytest | **97 tests passing** in pytest |
+| Scout reached a survivor and rescue began | **20/20 (100%)** | **100/100 (100%)** |
+| Collisions | **0** | **0** |
+| Longest idle time | 0.20 s | 0.20 s |
+| Localization error at lock (median / mean / max) | 8.25 / 11.77 / 56.57 px | 8.28 / 9.54 / 53.93 px |
+| Rescue standoff error (median) | **2.50 px** | **2.47 px** |
+| Triage accuracy | **100% (25/25)** | **96.6% (112/116)** |
+| Unmatched locks | 0 | 1 |
 
-> **Note on Lock vs. Rescue Localization Error**: Lock-time error is large because early locks happen at long range (up to 340 px) where pixel discretization and triangulation angles are coarsest; as the scout closes in, continuous sensor filtering refines the estimate down to ~1–2 px by the time the survivor is reached and secured.
+Held-out confusion matrix (rows = true, columns = perceived):
 
-#### Benchmark Confusion Matrices (Rows = Ground Truth, Columns = Perceived)
-
-**Dev Results (20 layouts, seeds 0–19):**
 ```
               CRITICAL   INJURED    STABLE
-  CRITICAL          12         0         0
-  INJURED            0         8         0
-  STABLE             0         0         5
+  CRITICAL          52         0         0
+  INJURED            4        30         0
+  STABLE             0         0        30
 ```
+All 4 errors are INJURED read as CRITICAL (over-triage); no survivor was ranked below its true urgency in this mode.
 
-**Held-Out Results (100 layouts, seeds 1000–1099):**
+### Mode 2: Priority sweep (default app and demo mode)
+
+The scout completes a ~99% area sweep, queues every detected survivor, then dispatches up to 3 rescuers in triage order. Survivors are detected at long range, so estimates are noisier than in Mode 1.
+
+| Metric | Dev (20 layouts) | Held-out (100 layouts) |
+|---|---|---|
+| Mission reached MISSION_COMPLETE | **20/20 (100%)** | **100/100 (100%)** |
+| Survivors physically reached by a rescuer (within 85 px) | **76/84 (90.5%)** | **371/398 (93.2%)** |
+| Layouts where every arena survivor was reached | 14/20 (70%) | 75/100 (75%) |
+| Survivors never detected | 0 | 10 |
+| Collisions | **0** | **0** |
+| Median mission time | 62.1 s | 54.2 s |
+| Localization error at lock (median / mean / max) | 11.15 / 19.98 / 84.68 px | 11.33 / 19.04 / 82.77 px |
+| Rescue standoff error (median) | 15.86 px | 12.97 px |
+| Rescues more than 50 px from the estimate target | 14 / 76 | 50 / 361 |
+| Triage accuracy | 91.5% (75/82) | 88.5% (339/383) |
+| Unmatched locks | 5 | 38 |
+
+"Mission reached MISSION_COMPLETE" means the state machine finished its sweep and queue; it does **not** mean every survivor was reached. The row "Survivors physically reached" is the real rescue rate.
+
+Held-out confusion matrix (rows = true, columns = perceived):
+
 ```
               CRITICAL   INJURED    STABLE
-  CRITICAL          51         0         0
-  INJURED            4        29         0
-  STABLE             0         0        29
+  CRITICAL         158         2         2
+  INJURED           20       104         2
+  STABLE            16         2        77
 ```
 
-> Reproduce benchmark commands at any time:
-> ```bash
-> # Dev benchmark (20 layouts):
-> .venv/bin/python run.py --benchmark
->
-> # Held-out benchmark (100 layouts, seeds 1000-1099):
-> .venv/bin/python run.py --benchmark --layouts 100 --seed 1000
-> ```
-
-### Perception & Accuracy Engineering
-
-1. **Range sanity gating:** Detections with estimated distance $Z > 340$ px or $Z < 10$ px are automatically discarded.
-2. **Variance-based lock confirmation:** Position locked only after $\ge 4$ consecutive stable observations with spatial variance $\sigma \le 20$ px.
-3. **EMA coordinate smoothing:** Exponential moving average ($lpha = 0.35$) eliminates single-frame jitter.
-4. **Honest majority-vote triage:** Ground-truth labels are never consulted for operational decisions. Perceived triage requires $\ge 70\%$ vote consensus across observations before freezing.
-
----
-
-## Limitations & Future Scope
-
-| Limitation | Technical Detail | Future Scope |
-|---|---|---|
-| **Lock-time error at long range** | Early locks at long range (>200 px) can exhibit 40–55 px error; the estimate converges to ~1–2 px as the survivor is approached and secured. | Range-adaptive lock gating, stereo/depth cues. |
-| **Limited survivor placement variety** | Survivors are placed on a limited set of candidate spots, so benchmark layouts are seeded but share topological features. | Continuous random Poisson-disk placement. |
-| **INJURED vs STABLE long-range confusion** | At distance > 220 px, badge size shrinks to $<4$ px, risking color confusion with torso reflective striping ($H=23$). Resolved via vertical ROI tightening ($0.45h$–$0.85h$) and tuning yellow band to $H \in [26, 38]$. | Implement multi-scale super-resolution or zoom ROI on candidate survivor boxes. |
-| **2-D synthetic camera** | Camera rasterizes 2.5-D column projections in 160×90 rather than true 3-D mesh raytracing or RGB-D sensors. | Port sensor stack to ROS 2 Humble + Gazebo simulation with simulated RealSense D435. |
-| **Simulation-only environment** | Physics, wheel slip, and sensor latency are ideal 2-D kinematic models. | Deploy on physical differential-drive rover platform with STM32 motor controller. |
-| **Single-scout agent** | One scout robot conducts sweeps while 3 autonomous rescuers assist. | Implement multi-agent auction-based dispatch algorithm for collaborative multi-scout swarms. |
-| **Fixed arena dimensions** | Disaster site is bounded to 800×650 px grid. | Integrate real-time Occupancy Grid Mapping (Cartographer / SLAM Toolbox) for unbounded environments. |
-
----
-
-## Test Suite
-
+### Reproduce
 ```bash
-.venv/bin/python -m pytest tests/ -v    # run all 96 tests
-.venv/bin/python -m pytest tests/ -q    # quiet summary
+python3 run.py --benchmark
+python3 run.py --benchmark --layouts 100 --seed 1000
+python3 run.py --benchmark --priority --max-frames 12000
+python3 run.py --benchmark --priority --max-frames 12000 --layouts 100 --seed 1000
+.venv/bin/python -m pytest tests/ -q
 ```
 
-Test files cover: FSM rescue timer, triage/ID consistency, honest vision triage,
-manual mode + sound, phase 2 dispatch, phase 3 coverage/battery, phase 4 hazard/noise,
-priority mode, random layouts benchmark, seed reproducibility, kinematics, sensors,
-camera, A*, APF, detector, tracker.
+## Limitations and future scope
 
----
+| Limitation | Detail | Future scope |
+|---|---|---|
+| Simulation only | 2-D Pygame world with a synthetic camera (160x90) | ROS 2 with a real wheeled robot and camera |
+| Long-range lock error | Early locks from far away can be 50-85 px off; the estimate converges to ~2.5 px at rescue standoff in Mode 1 | Range-adaptive lock gating, stereo/depth cues |
+| Triage at long range | In Priority mode accuracy is ~89-92%; INJURED is sometimes read as CRITICAL, and a few CRITICAL survivors are read as lower urgency | Learned detector trained on real data, longer vote windows |
+| Duplicate and merged tracks | Two survivors ~90 px apart can merge into one track; a far-range duplicate can send a second rescuer to the same survivor | Multi-hypothesis tracking, appearance cues |
+| Noisy early estimates | A rescuer can stop 95-113 px from a survivor when dispatched on an early estimate and the path is blocked | Continuous re-targeting with path-aware standoff |
+| Placement variety | Survivors spawn on a limited set of candidate spots; one benchmark layout spawns a survivor inside an obstacle | Continuous random placement with reachability checks |
+| Coverage pockets | A few survivors in unscanned corners are never detected (10 of 398 in held-out Priority runs) | Frontier-based exploration of unreachable pockets |
 
-*Built with Python 3.9 · Pygame 2.6 · NumPy 2.0 · OpenCV 5.0*  
-*Hack in Hills '26 — "See. Locate. Rescue."*
+Also planned: a response-time graph per survivor, a web telemetry dashboard, and a `--num-survivors` option.
+
+## Project structure
+
+| File | Purpose |
+|---|---|
+| `app.py` | Main loop, `RakshakApp`, rendering, keyboard input |
+| `fsm.py` | `MissionFSM`: mission state logic, priority queue, sweep |
+| `rescuer.py` | `DispatchManager`, `RescuerAgent`, triage priority key |
+| `detector.py` | HSV camera pipeline and triage badge detection |
+| `tracker.py` | Multi-frame tracker, association gate, majority vote, lock |
+| `arena.py` | Arena, obstacles, hazard zones, survivor placement |
+| `robot.py` | Differential-drive kinematics, proximity sensors |
+| `camera.py` | Synthetic camera rasteriser, noise and smoke |
+| `astar.py`, `apf.py` | Global planner and reactive avoidance |
+| `coverage.py` | Area-scanned tracker and frontier targeting |
+| `sound.py` | Sound manager (pygame mixer) |
+| `run.py` | CLI: benchmark, demo recorder |
+| `make_demo.py` | Headless scripted demo recorder |
+| `tests/` | 97 pytest tests |
+
+## Team
+
+Team **Bihari_Coders**: Arpit Bhardwaj, Ritik Soni, Pratyush Singh.
