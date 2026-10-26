@@ -4,7 +4,7 @@
 
 Rakshak is a 2-D autonomous search-and-rescue (SAR) simulation. A scout robot patrols a disaster arena, finds survivors with a camera and a vision pipeline, triages them (CRITICAL / INJURED / STABLE), and dispatches up to three rescuers in triage-priority order. An operator can take over at any time with a manual mode.
 
-- Demo video: **<ADD YOUTUBE LINK HERE>**
+- Demo video: **https://youtu.be/N3htSgzlFo0**
 - Screenshots: `docs/screenshots/01_autonomous.png`, `02_manual.png`, `03_complete.png`
 
 ![Autonomous run](docs/screenshots/01_autonomous.png)
