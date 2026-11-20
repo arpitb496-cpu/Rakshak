@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rakshak: Autonomous Search &amp; Rescue</title>
+<meta name="description" content="Rakshak is a vision-based autonomous search-and-rescue robot simulation built for Hack in Hills 2026, Problem Statement 01.">
+<style>
+  :root{
+    --bg:#0b1118; --panel:#121b26; --line:#223244; --text:#e6edf5; --muted:#93a4b8;
+    --cyan:#35d0ff; --green:#3ddc84; --amber:#ffb454; --red:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  a{color:var(--cyan)}
+  .wrap{max-width:960px;margin:0 auto;padding:0 16px}
+  header{padding:56px 0 32px;border-bottom:1px solid var(--line)}
+  .tag{display:inline-block;font:600 12px/1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--cyan);border:1px solid var(--line);padding:6px 10px;border-radius:999px}
+  h1{font-size:clamp(34px,6vw,56px);line-height:1.1;margin:16px 0 8px;letter-spacing:-.02em}
+  h1 span{color:var(--cyan)}
+  .lead{font-size:18px;color:var(--muted);max-width:720px;margin:0}
+  .cta{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}
+  .btn{display:inline-block;padding:10px 16px;border-radius:8px;border:1px solid var(--line);text-decoration:none;color:var(--text);font-weight:600}
+  .btn.primary{background:var(--cyan);color:#04202b;border-color:var(--cyan)}
+  section{padding:40px 0;border-bottom:1px solid var(--line)}
+  h2{font-size:24px;margin:0 0 16px;letter-spacing:-.01em}
+  h3{font-size:16px;margin:0 0 6px}
+  .video{position:relative;padding-top:56.25%;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#000}
+  .video iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+  .facade{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#0e1620}
+  .facade img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .facade .play{position:relative;width:72px;height:72px;border-radius:50%;background:rgba(11,17,24,.8);border:2px solid var(--cyan);color:var(--cyan);display:flex;align-items:center;justify-content:center;font-size:26px;padding-left:5px}
+  .grid{display:grid;gap:12px}
+  .g3{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card p{margin:0;color:var(--muted);font-size:15px}
+  .step{font:700 12px/1 ui-monospace,Menlo,Consolas,monospace;color:var(--cyan);margin-bottom:8px}
+  .stat{font-size:32px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+  .stat small{display:block;font-size:13px;font-weight:500;color:var(--muted);letter-spacing:0;margin-top:6px}
+  .table-scroll{overflow-x:auto;border:1px solid var(--line);border-radius:12px}
+  table{border-collapse:collapse;width:100%;min-width:560px;font-size:15px}
+  th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line)}
+  th{background:var(--panel);color:var(--muted);font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:.04em}
+  tr:last-child td{border-bottom:0}
+  td.n{font-variant-numeric:tabular-nums}
+  .note{color:var(--muted);font-size:14px;margin-top:10px}
+  pre{background:#070c12;border:1px solid var(--line);border-radius:10px;padding:14px;overflow-x:auto;margin:0;font:14px/1.6 ui-monospace,Menlo,Consolas,monospace}
+  code{font-family:ui-monospace,Menlo,Consolas,monospace}
+  ul{margin:0;padding-left:20px;color:var(--muted)}
+  li{margin:6px 0}
+  figure{margin:0}
+  figure img{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:10px}
+  figcaption{color:var(--muted);font-size:13px;margin-top:6px}
+  footer{padding:32px 0 56px;color:var(--muted);font-size:14px}
+  @media (max-width:520px){header{padding-top:36px}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <span class="tag">Hack in Hills '26 &middot; Problem Statement 01 &middot; Top 16 Grand Finalist</span>
+    <h1><span>Rakshak</span> &middot; Autonomous Search &amp; Rescue</h1>
+    <p class="lead">A vision-based rescue robot, built in simulation. A scout robot finds survivors through its camera, triages them by what it actually sees, and dispatches rescue robots in priority order.</p>
+    <div class="cta">
+      <a class="btn primary" href="#demo">Watch the demo</a>
+      <a class="btn" href="https://github.com/arpitb496-cpu/Rakshak">GitHub repository</a>
+      <a class="btn" href="#run">Run it yourself</a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section id="demo">
+  <h2>Demo</h2>
+  <div class="video" id="player">
+    <a class="facade" href="https://youtu.be/N3htSgzlFo0" aria-label="Play the Rakshak demo video">
+      <img src="https://img.youtube.com/vi/N3htSgzlFo0/hqdefault.jpg" alt="" onerror="this.style.display='none'">
+      <span class="play" aria-hidden="true">&#9654;</span>
+    </a>
+  </div>
+  <div class="cta" style="margin-top:14px">
+    <a class="btn primary" href="https://youtu.be/N3htSgzlFo0">Watch on YouTube</a>
+  </div>
+  <p class="note">Rakshak is a Python/pygame desktop simulation, so there is no hosted web app. This page is its project page.</p>
+  <script>
+    (function(){
+      var box=document.getElementById('player');
+      var a=box&&box.querySelector('.facade');
+      if(!a)return;
+      a.addEventListener('click',function(e){
+        e.preventDefault();
+        var f=document.createElement('iframe');
+        f.src='https://www.youtube.com/embed/N3htSgzlFo0?autoplay=1';
+        f.title='Rakshak demo video';
+        f.allow='autoplay; encrypted-media; picture-in-picture';
+        f.allowFullscreen=true;
+        box.innerHTML='';
+        box.appendChild(f);
+      });
+    })();
+  </script>
+</section>
+
+<section>
+  <h2>How it works</h2>
+  <div class="grid g3">
+    <div class="card"><div class="step">01 SEARCH</div><h3>Coverage-guided patrol</h3><p>The scout sweeps the arena, favouring unseen areas, and returns to base when the battery runs low.</p></div>
+    <div class="card"><div class="step">02 TRIAGE</div><h3>Honest vision</h3><p>Severity (CRITICAL / INJURED / STABLE) comes only from the camera's perceived colour label, decided by an 8-frame majority vote and then frozen. Ground truth is used for metrics only.</p></div>
+    <div class="card"><div class="step">03 LOCALIZE</div><h3>Track and estimate</h3><p>Range and bearing give a position estimate, and a tracker refines it across frames.</p></div>
+    <div class="card"><div class="step">04 QUEUE</div><h3>SOS priority queue</h3><p>Located survivors enter a queue. In priority mode, critical cases are served first.</p></div>
+    <div class="card"><div class="step">05 DISPATCH</div><h3>Three rescuers</h3><p>Free rescuers are sent with A* path planning around rubble, debris and hazard zones. Stuck rescuers replan.</p></div>
+    <div class="card"><div class="step">06 RESCUE</div><h3>Standoff and extraction</h3><p>A rescuer reaches the survivor, extracts them, and returns to base. The mission completes when everyone is secured.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>Screenshots</h2>
+  <div class="grid g3">
+    <figure><img src="docs/screenshots/01_autonomous.png" alt="Autonomous mode" onerror="this.parentElement.style.display='none'"><figcaption>Autonomous search</figcaption></figure>
+    <figure><img src="docs/screenshots/02_manual.png" alt="Manual mode" onerror="this.parentElement.style.display='none'"><figcaption>Manual control</figcaption></figure>
+    <figure><img src="docs/screenshots/03_complete.png" alt="Mission complete" onerror="this.parentElement.style.display='none'"><figcaption>Mission complete</figcaption></figure>
+  </div>
+</section>
+
+<section>
+  <h2>Results</h2>
+  <p class="note" style="margin-top:0;margin-bottom:14px">All figures come from our own seeded benchmarks, run in a terminal. Reproduce them with the commands below.</p>
+  <div class="grid g3" style="margin-bottom:16px">
+    <div class="card"><div class="stat">100/100<small>held-out layouts reached, default mode</small></div></div>
+    <div class="card"><div class="stat">0<small>collisions in every benchmark run</small></div></div>
+    <div class="card"><div class="stat">2.5 px<small>median rescue standoff error, default mode</small></div></div>
+  </div>
+
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Default mode (rescue as found)</th><th>20 dev layouts</th><th>100 held-out layouts*</th></tr></thead>
+      <tbody>
+        <tr><td>Reach rate</td><td class="n">20/20</td><td class="n">100/100</td></tr>
+        <tr><td>Collisions</td><td class="n">0</td><td class="n">0</td></tr>
+        <tr><td>Lock-time error (median)</td><td class="n">8.25 px</td><td class="n">8.28 px</td></tr>
+        <tr><td>Rescue standoff error (median)</td><td class="n">2.50 px</td><td class="n">2.47 px</td></tr>
+        <tr><td>Triage accuracy</td><td class="n">100% (25/25)</td><td class="n">96.6% (112/116)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">*Held-out layouts (<code>--layouts 100 --seed 1000</code>) were never used for tuning. They were measured on an earlier commit of the code.</p>
+
+  <div class="table-scroll" style="margin-top:16px">
+    <table>
+      <thead><tr><th>Priority mode (demo default)</th><th>20 dev layouts</th></tr></thead>
+      <tbody>
+        <tr><td>Missions completed</td><td class="n">18/20 (90%)</td></tr>
+        <tr><td>Survivors physically reached</td><td class="n">75/84 (89.3%)</td></tr>
+        <tr><td>Layouts with every survivor reached</td><td class="n">14/20 (70%)</td></tr>
+        <tr><td>Collisions</td><td class="n">0</td></tr>
+        <tr><td>Median mission time</td><td class="n">62.1 s</td></tr>
+        <tr><td>Median rescue error</td><td class="n">15.86 px</td></tr>
+        <tr><td>Triage accuracy</td><td class="n">91.5% (75/82)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Priority mode does not rescue every survivor in every layout. See the limitations below.</p>
+</section>
+
+<section>
+  <h2>Known limitations</h2>
+  <div class="card">
+    <ul>
+      <li>Priority mode leaves some survivors unreached in some layouts (about 89% reached on the dev set).</li>
+      <li>Locks made at long range have larger position error (outliers of 50 to 80 px); the error shrinks to about 1 to 2 px by extraction in default mode.</li>
+      <li>At long range, INJURED survivors are sometimes perceived as CRITICAL.</li>
+      <li>Duplicate tracks can send two rescuers to the same survivor, and closely spaced survivors can be merged.</li>
+      <li>Triage is rule-based colour perception, not a trained detector.</li>
+      <li>It is a 2D simulation with a limited set of survivor spawn spots, so the benchmarks are seeded random layouts rather than fully unique ones.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="run">
+  <h2>Run it</h2>
+  <pre><code>git clone https://github.com/arpitb496-cpu/Rakshak.git
+cd Rakshak
+pip install -r requirements.txt
+python3 app.py                       # interactive simulation
+python3 run.py --benchmark           # default-mode benchmark (20 layouts)
+python3 run.py --benchmark --priority --max-frames 12000   # priority mode
+python3 -m pytest tests/ -q          # 97 tests</code></pre>
+  <p class="note">Requires Python 3.9+. Controls: <code>SPACE</code> pause, <code>R</code> reset, <code>M</code> manual, <code>P</code> priority mode.</p>
+</section>
+
+<section style="border-bottom:0">
+  <h2>Roadmap</h2>
+  <div class="card"><ul>
+    <li>Port the logic to ROS 2 and test on a real robot.</li>
+    <li>Replace colour-based triage with a trained detector, using real camera data.</li>
+    <li>Fix duplicate-track handling and improve coverage of hard-to-reach pockets.</li>
+  </ul></div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <strong>Team Bihari_Coders</strong>: Arpit Bhardwaj (lead), Ritik Soni, Pratyush Singh.<br>
+    Built for Hack in Hills 2026, powered by TinyFish.
+  </div>
+</footer>
+
+</body>
+</html>
